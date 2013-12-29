@@ -37,7 +37,7 @@ var defaultPluginSrv = &pluginSrv{
 	srv:   rpc.NewServer(),
 }
 
-func (p *pluginSrv) readRouterPort() (err error) {
+func (p *pluginSrv) readRouterPort() (port string, err error) {
 	v := make(map[string]string)
 	p.mu.RLock()
 	err = json.NewDecoder(p.stdin).Decode(&v)
@@ -45,21 +45,21 @@ func (p *pluginSrv) readRouterPort() (err error) {
 	if err != nil {
 		return
 	}
-	routerPort, ok := v["port"]
+	port, ok := v["port"]
 	if !ok {
-		return errRouterPort
+		err = errRouterPort
+		return
 	}
-	if _, err = strconv.ParseUint(routerPort, 10, 16); err != nil {
-		return errRouterPort
+	if _, err = strconv.ParseUint(port, 10, 16); err != nil {
+		err = errRouterPort
+		return
 	}
-	p.mu.Lock()
-	p.routerPort = routerPort
-	p.mu.Unlock()
 	return
 }
 
 func (p *pluginSrv) listenAndServe(rcrv interface{}) (err error) {
-	if err = p.readRouterPort(); err != nil {
+	var routerPort string
+	if routerPort, err = p.readRouterPort(); err != nil {
 		return
 	}
 	var l net.Listener
@@ -67,6 +67,7 @@ func (p *pluginSrv) listenAndServe(rcrv interface{}) (err error) {
 		return
 	}
 	defer l.Close()
+	go p.serve(l)
 	var port string
 	if _, port, err = net.SplitHostPort(l.Addr().String()); err != nil {
 		return
@@ -76,10 +77,9 @@ func (p *pluginSrv) listenAndServe(rcrv interface{}) (err error) {
 	p.port = port
 	p.mu.Unlock()
 	var r *rpc.Client
-	if r, err = rpc.Dial("tcp", "localhost:"+port); err != nil {
+	if r, err = rpc.Dial("tcp", "localhost:"+routerPort); err != nil {
 		return
 	}
-	go p.serve(l)
 	req := map[string]string{
 		"service": reflect.TypeOf(rcrv).Name(),
 		"port":    port,
@@ -87,7 +87,6 @@ func (p *pluginSrv) listenAndServe(rcrv interface{}) (err error) {
 	if err = r.Call("Router.Register", req, nil); err != nil {
 		return
 	}
-	fmt.Println(req["service"], " serving on localhost:"+port, ". . .")
 	select {}
 }
 
