@@ -1,11 +1,17 @@
 package wip
 
 import (
+	_ "bufio"
+	"bytes"
+	"encoding/gob"
+	"errors"
 	"fmt"
 	"io"
+	_ "io/ioutil"
 	"net"
 	"net/rpc"
 	"reflect"
+	"strings"
 )
 
 type Plugin struct{}
@@ -27,6 +33,7 @@ func StartPlugin(rcrv interface{}) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	fmt.Println("plugin port:", port)
 	go func() {
 		for {
 			conn, err := l.Accept()
@@ -39,28 +46,56 @@ func StartPlugin(rcrv interface{}) (string, error) {
 	return port, nil
 }
 
-type plugind struct {
+type router struct {
 	port    string
 	plugins map[string]string
 }
 
-func (p *plugind) ReadRequestHeader(req *rpc.Request) error {
-	return nil
+func (rt *router) routeConn(conn io.ReadWriteCloser) {
+	var buf bytes.Buffer
+	var req rpc.Request
+	dec := gob.NewDecoder(io.TeeReader(conn, &buf))
+	for {
+		var err error
+		defer fmt.Println("routeConn:", err)
+		defer buf.Reset()
+		if err = dec.Decode(&req); err != nil {
+			break
+		}
+		if err = dec.Decode(nil); err != nil {
+			break
+		}
+		var port string
+		dot := strings.LastIndex(req.ServiceMethod, ".")
+		if dot < 0 {
+			err = errors.New("rpc: service/method request ill-formed: " + req.ServiceMethod)
+		} else {
+			var ok bool
+			serviceName := req.ServiceMethod[:dot]
+			port, ok = rt.plugins[serviceName]
+			if !ok {
+				err = errors.New("rps: can't find service " + req.ServiceMethod)
+			}
+		}
+		if err != nil {
+			break
+		}
+		plugin, err := net.Dial("tcp", "localhost:"+port)
+		if err != nil {
+			break
+		}
+		defer plugin.Close()
+		if _, err = plugin.Write(buf.Bytes()); err != nil {
+			break
+		}
+		if _, err = io.Copy(conn, plugin); err != nil {
+			break
+		}
+	}
+	conn.Close()
 }
 
-func (p *plugind) ReadRequestBody(body interface{}) error {
-	return nil
-}
-
-func (p *plugind) WriteResponse(res *rpc.Response, body interface{}) error {
-	return nil
-}
-
-func (p *plugind) Close() error {
-	return nil
-}
-
-func NewPlugind() (*plugind, error) {
+func NewRouter() (*router, error) {
 	l, err := net.Listen("tcp", "localhost:0")
 	if err != nil {
 		return nil, err
@@ -69,7 +104,8 @@ func NewPlugind() (*plugind, error) {
 	if err != nil {
 		return nil, err
 	}
-	pd := &plugind{
+	fmt.Println("router port:", port)
+	r := &router{
 		port:    port,
 		plugins: make(map[string]string),
 	}
@@ -79,23 +115,13 @@ func NewPlugind() (*plugind, error) {
 			if err != nil {
 				continue
 			}
-			go func() {
-				for _, port := range pd.plugins {
-					plugin, err := net.Dial("tcp", "localhost:"+port)
-					if err != nil {
-						fmt.Println("plugind error:", err)
-						continue
-					}
-					go io.Copy(conn, plugin)
-					go io.Copy(plugin, conn)
-				}
-			}()
+			go r.routeConn(conn)
 		}
 	}()
-	return pd, nil
+	return r, nil
 }
 
-func (pd *plugind) init(name, port string) error {
+func (pd *router) init(name, port string) error {
 	pd.plugins[name] = port
 	c, err := rpc.Dial("tcp", "localhost:"+port)
 	if err != nil {
@@ -110,7 +136,7 @@ func (pd *plugind) init(name, port string) error {
 	return nil
 }
 
-func (pd *plugind) Start(plugins ...interface{}) error {
+func (pd *router) Start(plugins ...interface{}) error {
 	for _, p := range plugins {
 		port, err := StartPlugin(p)
 		if err != nil {

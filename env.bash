@@ -15,7 +15,6 @@ esac
 
 gpff-env() {
   unset GOBIN
-
   test -z "${GOPATH}" && {
     GOPATH=${TOP}
   } || {
@@ -23,22 +22,27 @@ gpff-env() {
       GOPATH=${TOP}:${GOPATH}
     }
   }
-
   local src=${TOP}/src/github.com/rjeczalik
   local alias=${TOP}/src
-
   test -d "${src}/gpff" || {
     mkdir -p "${src}"; (
       cd "${src}"; ln -sf ../../../ gpff
     )
   }
-
   test -d "${alias}/gpff" || (
     cd "${alias}"; ln -sf ../ gpff
   )
-
   export GOPATH
 }
 
-gpff-env
+gpff-dep() {
+  local deps=(
+    "bitbucket.org/kardianos/osext"
+  )
+  for i in ${!deps[@]}; do
+    go get "${deps[${i}]}"
+  done
+}
 
+gpff-env
+gpff-dep

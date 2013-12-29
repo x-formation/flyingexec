@@ -36,47 +36,65 @@ func pguard(t *testing.T) {
 	}
 }
 
-type MyPlugin struct {
+type Mul struct {
 	Plugin
 }
 
-type MyOtherPlugin struct {
+type Add struct {
 	Plugin
 }
 
-func (p MyPlugin) Hello(req, res *string) error {
-	*res = "Hello " + *req
-	return nil
+func (p Mul) Two(req, res *int) (err error) {
+	*res = (*req) * 2
+	return
 }
 
-func (p MyOtherPlugin) Hai(req, res *string) error {
-	*res = "Hai " + *req
-	return nil
+func (p Mul) Four(req, res *int) (err error) {
+	*res = (*req) * 4
+	return
 }
 
-func (pd *plugind) call(method, req string) error {
+func (p Add) Three(req, res *int) (err error) {
+	*res = (*req) + 3
+	return
+}
+
+func (p Add) Four(req, res *int) (err error) {
+	*res = (*req) + 4
+	return
+}
+
+func (pd *router) call(t *testing.T, method string, req int, exp int) {
 	c, err := rpc.Dial("tcp", "localhost:"+pd.port)
 	if err != nil {
-		return err
+		t.Error("call error:", method, pd.port)
 	}
-	var res string
-	return c.Call(method, &req, &res)
+	defer c.Close()
+	var res int
+	if err = c.Call(method, &req, &res); err != nil {
+		t.Fatal("call error:", method, err)
+	}
+	if res != exp {
+		t.Error("call error:", method, res, exp)
+	}
 }
 
 func Test(t *testing.T) {
 	defer pguard(t)
-	p, err := NewPlugind()
+	p, err := NewRouter()
 	if err != nil {
-		t.Fatal("newplugind:", err)
+		t.Fatal("newrouter:", err)
 	}
-	err = p.Start(MyPlugin{}, MyOtherPlugin{})
+	err = p.Start(Add{}, Mul{})
 	if err != nil {
 		t.Error("start:", err)
 	}
-	if err = p.call("MyPlugin.Hello", "Joe"); err != nil {
-		t.Error("call:", err)
-	}
-	if err = p.call("MyOtherPlugin.Hai", "Joe"); err != nil {
-		t.Error("call:", err)
-	}
+	p.call(t, "Add.Three", 6, 9)
+	p.call(t, "Add.Four", 10, 14)
+	p.call(t, "Mul.Two", 6, 12)
+	p.call(t, "Add.Three", 13, 16)
+	p.call(t, "Mul.Four", 6, 24)
+	p.call(t, "Mul.Four", 2, 8)
+	p.call(t, "Add.Three", 12, 15)
+	p.call(t, "Add.Four", -1, 3)
 }
