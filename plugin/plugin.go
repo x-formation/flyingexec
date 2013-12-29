@@ -31,6 +31,10 @@ func (p Plugin) Version(_, res *string) (err error) {
 	return
 }
 
+func (p Plugin) Init(_, _ *string) (err error) {
+	return
+}
+
 type pluginSrv struct {
 	port       string
 	routerPort string

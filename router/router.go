@@ -18,16 +18,18 @@ import (
 )
 
 type plugin struct {
-	port    string
+	service string
 	version string
+	port    string
 	cmd     *exec.Cmd
 	buf     *bytes.Buffer
+	client  *rpc.Client
 	err     error
 }
 
-type kv struct {
-	k string
-	v *plugin
+func (p *plugin) String() string {
+	return fmt.Sprintf("service %q (version=%s, path=%s), listening on localhost:%s",
+		p.service, p.version, p.cmd.Path, p.port)
 }
 
 var errRegisterReq = errors.New(`router: register request ill-formed`)
@@ -40,7 +42,7 @@ type Router struct {
 	internal     *rpc.Server
 	plugins      map[string]*plugin
 	pending      map[string]*plugin
-	valid        chan kv
+	valid        chan *plugin
 	invalid      chan *plugin
 }
 
@@ -55,12 +57,12 @@ func (rt *Router) Register(req *map[string]string, _ *int) (err error) {
 	p, ok := rt.pending[(*req)["path"]]
 	rt.mu.RUnlock()
 	if !ok {
-		err = fmt.Errorf("router: no plugin awaiting registration for path %q", (*req)["path"])
+		err = fmt.Errorf("router: no plugin awaiting registration for path %s", (*req)["path"])
 		return
 	}
 	defer func() {
 		if err == nil {
-			rt.valid <- kv{(*req)["service"], p}
+			rt.valid <- p
 		} else {
 			rt.mu.Lock()
 			p.err = err
@@ -72,7 +74,6 @@ func (rt *Router) Register(req *map[string]string, _ *int) (err error) {
 	if client, err = rpc.Dial("tcp", "localhost:"+(*req)["port"]); err != nil {
 		return
 	}
-	defer client.Close()
 	var port string
 	if err = client.Call((*req)["service"]+".Port", "", &port); err != nil {
 		return
@@ -91,8 +92,10 @@ func (rt *Router) Register(req *map[string]string, _ *int) (err error) {
 		return
 	}
 	rt.mu.Lock()
-	p.port = port
+	p.service = (*req)["service"]
 	p.version = version
+	p.port = port
+	p.client = client
 	rt.mu.Unlock()
 	return
 }
@@ -114,7 +117,7 @@ func (rt *Router) loadPlugins() (err error) {
 		cmd.Stdin = bytes.NewReader(portJSON)
 		cmd.Stdout = buf
 		cmd.Stderr = buf
-		go rt.run(&plugin{"", "", cmd, buf, nil})
+		go rt.run(&plugin{"", "", "", cmd, buf, nil, nil})
 	}
 	return
 }
@@ -123,7 +126,7 @@ func (rt *Router) daemon() {
 	for {
 		select {
 		case p := <-rt.invalid:
-			rt.remove("", p)
+			rt.remove(p)
 		}
 	}
 }
@@ -138,8 +141,8 @@ func (rt *Router) run(p *plugin) {
 		return
 	}
 	select {
-	case kv := <-rt.valid:
-		rt.add(kv.k, kv.v)
+	case p := <-rt.valid:
+		rt.add(p)
 	case <-time.After(30 * time.Second):
 		rt.mu.Lock()
 		p.err = errTimeout
@@ -150,33 +153,48 @@ func (rt *Router) run(p *plugin) {
 	p.err = p.cmd.Wait()
 }
 
-func (rt *Router) add(service string, p *plugin) {
+func (rt *Router) add(p *plugin) {
+	rt.mu.RLock()
+	_, ok := rt.plugins[p.service]
+	rt.mu.RUnlock()
+	if ok {
+		log.Printf("error adding plugin: service %q is already registered, removing %s", p.service, p.cmd.Path)
+		rt.remove(p)
+		return
+	}
 	rt.mu.Lock()
-	rt.plugins[service] = p
-	port, version := p.port, p.version
+	rt.plugins[p.service] = p
 	delete(rt.pending, p.cmd.Path)
 	rt.mu.Unlock()
-	log.Printf("service successfully added: %s (%s) on localhost:%s",
-		service, version, port)
+	defer func() {
+		p.client.Close()
+		p.client = nil
+	}()
+	var res string
+	if err := p.client.Call(p.service+".Init", "", &res); err != nil {
+		log.Printf("error initializing plugin: error=%q, combined output=%q",
+			err.Error(), string(p.buf.Bytes()))
+		rt.remove(p)
+		return
+	}
+	log.Printf("plugin successfully added: %s", p)
 }
 
-func (rt *Router) remove(service string, p *plugin) {
+func (rt *Router) remove(p *plugin) {
 	rt.mu.Lock()
 	err := p.err
 	delete(rt.pending, p.cmd.Path)
 	rt.mu.Unlock()
-	if len(service) > 0 && err == nil {
+	if len(p.service) > 0 && err == nil {
 		rt.mu.Lock()
-		port, version := p.port, p.version
-		delete(rt.plugins, service)
+		delete(rt.plugins, p.service)
 		rt.mu.Unlock()
-		log.Printf("service successfully removed: %s (%s) on localhost:%s",
-			service, version, port)
+		log.Printf("plugin successfully removed: %s", p)
 	} else {
 		rt.mu.RLock()
 		output, path, err := string(p.buf.Bytes()), p.cmd.Path, p.err.Error()
 		rt.mu.RUnlock()
-		log.Printf("error running %s: error=%q, combined output=%q", path, err, output)
+		log.Printf("error running plugin %s: error=%q, combined output=%q", path, err, output)
 	}
 }
 
@@ -196,7 +214,7 @@ func NewRouter() (rt *Router, err error) {
 		internal: rpc.NewServer(),
 		plugins:  make(map[string]*plugin),
 		pending:  make(map[string]*plugin),
-		valid:    make(chan kv),
+		valid:    make(chan *plugin),
 		invalid:  make(chan *plugin),
 	}
 	var l net.Listener
