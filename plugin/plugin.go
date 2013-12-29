@@ -3,15 +3,19 @@ package plugin
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/rpc"
 	"os"
 	"reflect"
 	"strconv"
 	"sync"
+
+	"bitbucket.org/kardianos/osext"
 )
+
+const NonVersioned = "non-versioned"
 
 type Plugin struct{}
 
@@ -19,6 +23,11 @@ func (p Plugin) Port(_, res *string) (err error) {
 	defaultPluginSrv.mu.RLock()
 	*res = defaultPluginSrv.port
 	defaultPluginSrv.mu.RUnlock()
+	return
+}
+
+func (p Plugin) Version(_, res *string) (err error) {
+	*res = NonVersioned
 	return
 }
 
@@ -72,6 +81,10 @@ func (p *pluginSrv) listenAndServe(rcrv interface{}) (err error) {
 	if _, port, err = net.SplitHostPort(l.Addr().String()); err != nil {
 		return
 	}
+	var path string
+	if path, err = osext.Executable(); err != nil {
+		return
+	}
 	p.mu.Lock()
 	p.srv.Register(rcrv)
 	p.port = port
@@ -81,12 +94,14 @@ func (p *pluginSrv) listenAndServe(rcrv interface{}) (err error) {
 		return
 	}
 	req := map[string]string{
-		"service": reflect.TypeOf(rcrv).Name(),
+		"service": reflect.TypeOf(rcrv).Elem().Name(),
 		"port":    port,
+		"path":    path,
 	}
 	if err = r.Call("Router.Register", req, nil); err != nil {
 		return
 	}
+	req = make(map[string]string)
 	select {}
 }
 
@@ -94,7 +109,7 @@ func (p *pluginSrv) serve(l net.Listener) {
 	for {
 		conn, err := l.Accept()
 		if err != nil {
-			fmt.Println(err)
+			log.Println(err)
 			continue
 		}
 		go p.srv.ServeConn(conn)
