@@ -1,10 +1,12 @@
 package testext
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"os/signal"
 	"runtime"
+	"sync"
 	"testing"
 )
 
@@ -33,4 +35,23 @@ func GuardPanic(t *testing.T) {
 	if r := recover(); r != nil {
 		t.Errorf("recovered from panic \"%v\"; stacktrace:\n\n%s", r, stack(false))
 	}
+}
+
+type SyncBuffer struct {
+	b bytes.Buffer
+	m sync.RWMutex
+}
+
+func (b *SyncBuffer) Read(p []byte) (n int, err error) {
+	b.m.RLock()
+	n, err = b.b.Read(p)
+	b.m.RUnlock()
+	return
+}
+
+func (b *SyncBuffer) Write(p []byte) (n int, err error) {
+	b.m.Lock()
+	n, err = b.b.Write(p)
+	b.m.Unlock()
+	return
 }

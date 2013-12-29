@@ -2,13 +2,14 @@ package plugin
 
 import (
 	"encoding/json"
+	"io"
 	"net"
 	"net/rpc"
 	"os"
 )
 
-var stdout = os.Stdout
-var stderr = os.Stderr
+var stdout io.ReadWriter = os.Stdout
+var stderr io.ReadWriter = os.Stderr
 
 func Serve(rcrv interface{}) {
 	encout, encerr := json.NewEncoder(stdout), json.NewEncoder(stderr)
