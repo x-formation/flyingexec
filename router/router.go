@@ -286,7 +286,7 @@ func (rt *Router) ListenAndServe(addr string) (err error) {
 	if l, err = net.Listen("tcp", addr); err != nil {
 		return
 	}
-	log.Println("router listening on", addr, ". . .")
+	log.Println("router listening on", l.Addr().String(), ". . .")
 	for {
 		conn, err := l.Accept()
 		if err != nil {
