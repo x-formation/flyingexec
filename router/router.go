@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -124,19 +125,28 @@ func (rt *Router) loadPlugins() (err error) {
 	if dir, err = osext.ExecutableFolder(); err != nil {
 		return
 	}
-	dir = filepath.Join(dir, "plugins")
+	pluginDir := filepath.Join(dir, "plugins")
+	logDir := filepath.Join(dir, "logs")
+	_ = os.MkdirAll(pluginDir, 0775)
+	_ = os.MkdirAll(logDir, 0775)
 	var plugins []os.FileInfo
-	if plugins, err = ioutil.ReadDir(dir); err != nil {
+	if plugins, err = ioutil.ReadDir(pluginDir); err != nil {
 		return
 	}
 	var portJSON = []byte(`{"port":"` + rt.admin.port + `"}` + "\r\n")
 	for _, p := range plugins {
-		buf := new(bytes.Buffer)
-		cmd := exec.Command(filepath.Join(dir, p.Name()))
+		var err error
+		var f io.Writer
+		logFile, buf := filepath.Join(logDir, p.Name()+".log"), new(bytes.Buffer)
+		var output io.Writer = buf
+		cmd := exec.Command(filepath.Join(pluginDir, p.Name()))
+		if f, err = os.OpenFile(logFile, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0644); err == nil {
+			output = io.MultiWriter(buf, f)
+		}
+		cmd.Stdout = output
+		cmd.Stderr = output
 		cmd.Stdin = bytes.NewReader(portJSON)
-		cmd.Stdout = buf
-		cmd.Stderr = buf
-		go rt.run(&plugin{"", "", "", cmd, buf, nil, nil})
+		go rt.run(&plugin{"", "", "", cmd, buf, nil, err})
 	}
 	return
 }
