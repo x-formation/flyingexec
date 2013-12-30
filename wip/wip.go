@@ -67,6 +67,7 @@ func (rt *router) routeConn(conn io.ReadWriteCloser) {
 		}
 		var port string
 		dot := strings.LastIndex(req.ServiceMethod, ".")
+		fmt.Println(req)
 		if dot < 0 {
 			err = errors.New("rpc: service/method request ill-formed: " + req.ServiceMethod)
 		} else {
@@ -80,6 +81,7 @@ func (rt *router) routeConn(conn io.ReadWriteCloser) {
 		if err != nil {
 			break
 		}
+		fmt.Println("net.Dial")
 		plugin, err := net.Dial("tcp", "localhost:"+port)
 		if err != nil {
 			break
