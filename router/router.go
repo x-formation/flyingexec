@@ -2,8 +2,10 @@ package router
 
 import (
 	"bytes"
+	"encoding/gob"
 	"errors"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"log"
 	"net"
@@ -11,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -36,38 +39,45 @@ var errRegisterReq = errors.New(`router: register request ill-formed`)
 var errPluginVersion = errors.New(`router: plugin version empty`)
 var errTimeout = errors.New(`router: awaiting registration to complete has timed out`)
 
-type Router struct {
-	mu           sync.RWMutex
-	internalPort string
-	internal     *rpc.Server
-	plugins      map[string]*plugin
-	pending      map[string]*plugin
-	valid        chan *plugin
-	invalid      chan *plugin
+type routerAdmin struct {
+	rt   *Router
+	port string
+	srv  *rpc.Server
 }
 
-func (rt *Router) Register(req *map[string]string, _ *int) (err error) {
+func (ra *routerAdmin) serve(l net.Listener) {
+	for {
+		conn, err := l.Accept()
+		if err != nil {
+			fmt.Println(err)
+			continue
+		}
+		go ra.srv.ServeConn(conn)
+	}
+}
+
+func (ra *routerAdmin) Register(req *map[string]string, _ *int) (err error) {
 	for _, k := range []string{"service", "port", "path"} {
 		if v, ok := (*req)[k]; !ok || len(v) == 0 {
 			err = errRegisterReq
 			return
 		}
 	}
-	rt.mu.RLock()
-	p, ok := rt.pending[(*req)["path"]]
-	rt.mu.RUnlock()
+	ra.rt.mu.RLock()
+	p, ok := ra.rt.pending[(*req)["path"]]
+	ra.rt.mu.RUnlock()
 	if !ok {
 		err = fmt.Errorf("router: no plugin awaiting registration for path %s", (*req)["path"])
 		return
 	}
 	defer func() {
 		if err == nil {
-			rt.valid <- p
+			ra.rt.valid <- p
 		} else {
-			rt.mu.Lock()
+			ra.rt.mu.Lock()
 			p.err = err
-			rt.mu.Unlock()
-			rt.invalid <- p
+			ra.rt.mu.Unlock()
+			ra.rt.invalid <- p
 		}
 	}()
 	var client *rpc.Client
@@ -91,13 +101,22 @@ func (rt *Router) Register(req *map[string]string, _ *int) (err error) {
 		err = errPluginVersion
 		return
 	}
-	rt.mu.Lock()
+	ra.rt.mu.Lock()
 	p.service = (*req)["service"]
 	p.version = version
 	p.port = port
 	p.client = client
-	rt.mu.Unlock()
+	ra.rt.mu.Unlock()
 	return
+}
+
+type Router struct {
+	admin   *routerAdmin
+	mu      sync.RWMutex
+	plugins map[string]*plugin
+	pending map[string]*plugin
+	valid   chan *plugin
+	invalid chan *plugin
 }
 
 func (rt *Router) loadPlugins() (err error) {
@@ -110,7 +129,7 @@ func (rt *Router) loadPlugins() (err error) {
 	if plugins, err = ioutil.ReadDir(dir); err != nil {
 		return
 	}
-	var portJSON = []byte(`{"port":"` + rt.internalPort + `"}` + "\r\n")
+	var portJSON = []byte(`{"port":"` + rt.admin.port + `"}` + "\r\n")
 	for _, p := range plugins {
 		buf := new(bytes.Buffer)
 		cmd := exec.Command(filepath.Join(dir, p.Name()))
@@ -158,7 +177,7 @@ func (rt *Router) add(p *plugin) {
 	_, ok := rt.plugins[p.service]
 	rt.mu.RUnlock()
 	if ok {
-		log.Printf("error adding plugin: service %q is already registered, removing %s", p.service, p.cmd.Path)
+		log.Printf("error adding plugin %q: service is already registered, removing %s", p.service, p.cmd.Path)
 		rt.remove(p)
 		return
 	}
@@ -172,8 +191,8 @@ func (rt *Router) add(p *plugin) {
 	}()
 	var res string
 	if err := p.client.Call(p.service+".Init", "", &res); err != nil {
-		log.Printf("error initializing plugin: error=%q, combined output=%q",
-			err.Error(), string(p.buf.Bytes()))
+		log.Printf("error initializing plugin %q: error=%q, combined output=%q",
+			p.service, err.Error(), string(p.buf.Bytes()))
 		rt.remove(p)
 		return
 	}
@@ -198,38 +217,94 @@ func (rt *Router) remove(p *plugin) {
 	}
 }
 
-func (rt *Router) internalServe(l net.Listener) {
+func (rt *Router) routeConn(conn io.ReadWriteCloser) {
+	var buf bytes.Buffer
+	var req rpc.Request
+	dec := gob.NewDecoder(io.TeeReader(conn, &buf))
 	for {
-		conn, err := l.Accept()
-		if err != nil {
-			fmt.Println(err)
-			continue
+		var err error
+		defer buf.Reset()
+		if err = dec.Decode(&req); err != nil {
+			break
 		}
-		go rt.internal.ServeConn(conn)
+		if err = dec.Decode(nil); err != nil {
+			break
+		}
+		var port string
+		dot := strings.LastIndex(req.ServiceMethod, ".")
+		if dot < 0 {
+			err = errors.New("rpc: service/method request ill-formed: " + req.ServiceMethod)
+		} else {
+			p, ok := rt.plugins[req.ServiceMethod[:dot]]
+			if !ok {
+				err = errors.New("rps: can't find service " + req.ServiceMethod)
+			} else {
+				port = p.port
+			}
+		}
+		if err != nil {
+			break // TODO: send a response back
+		}
+		route, err := net.Dial("tcp", "localhost:"+port)
+		if err != nil {
+			break // TODO: send a response back
+		}
+		defer route.Close()
+		if _, err = route.Write(buf.Bytes()); err != nil {
+			break
+		}
+		if _, err = io.Copy(conn, route); err != nil {
+			break
+		}
 	}
+	conn.Close()
 }
 
-func NewRouter() (rt *Router, err error) {
-	rt = &Router{
-		internal: rpc.NewServer(),
-		plugins:  make(map[string]*plugin),
-		pending:  make(map[string]*plugin),
-		valid:    make(chan *plugin),
-		invalid:  make(chan *plugin),
-	}
+func (ra *routerAdmin) listenAndServe() (err error) {
 	var l net.Listener
 	if l, err = net.Listen("tcp", "localhost:0"); err != nil {
 		return
 	}
-	if _, rt.internalPort, err = net.SplitHostPort(l.Addr().String()); err != nil {
+	if _, ra.port, err = net.SplitHostPort(l.Addr().String()); err != nil {
 		return
 	}
-	rt.internal.Register(rt)
-	go rt.daemon()
-	go rt.internalServe(l)
-	if err = rt.loadPlugins(); err != nil {
+	ra.srv.RegisterName("Router", ra)
+	go ra.rt.daemon()
+	go ra.serve(l)
+	if err = ra.rt.loadPlugins(); err != nil {
 		return
 	}
-	log.Println("router internal service listening on localhost:"+rt.internalPort, ". . .")
+	log.Println("router admin service listening on localhost:"+ra.port, ". . .")
+	return
+}
+
+func (rt *Router) ListenAndServe(addr string) (err error) {
+	if err = rt.admin.listenAndServe(); err != nil {
+		return
+	}
+	var l net.Listener
+	if l, err = net.Listen("tcp", addr); err != nil {
+		return
+	}
+	log.Println("router listening on", addr, ". . .")
+	for {
+		conn, err := l.Accept()
+		if err != nil {
+			log.Print("error serving connection:", err)
+			continue
+		}
+		go rt.routeConn(conn)
+	}
+	return
+}
+
+func NewRouter() (rt *Router) {
+	rt = &Router{
+		plugins: make(map[string]*plugin),
+		pending: make(map[string]*plugin),
+		valid:   make(chan *plugin),
+		invalid: make(chan *plugin),
+	}
+	rt.admin = &routerAdmin{rt, "", rpc.NewServer()}
 	return
 }
