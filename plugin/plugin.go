@@ -1,125 +1,103 @@
 package plugin
 
 import (
-	"encoding/json"
+	"bufio"
 	"errors"
-	"io"
 	"log"
 	"net"
 	"net/rpc"
 	"os"
 	"reflect"
 	"strconv"
-	"sync"
-
-	"bitbucket.org/kardianos/osext"
 )
 
 const NonVersioned = "non-versioned"
 
-type Plugin struct{}
+var errRead = errors.New("plugin: reading port and/or ID from stdin failed")
 
-func (p Plugin) Port(_, res *string) (err error) {
-	defaultPluginSrv.mu.RLock()
-	*res = defaultPluginSrv.port
-	defaultPluginSrv.mu.RUnlock()
-	return
+type Plugin interface {
+	Init(routerAddr string, version *string) error
 }
 
-func (p Plugin) Version(_, res *string) (err error) {
-	*res = NonVersioned
-	return
+type Connector struct {
+	ID         string
+	RouterAddr string
+	Listener   net.Listener
 }
 
-func (p Plugin) Init(_, _ *string) (err error) {
-	return
-}
-
-type pluginSrv struct {
-	port       string
-	routerPort string
-	mu         sync.RWMutex
-	stdin      io.ReadWriter
-	srv        *rpc.Server
-}
-
-var errRouterPort = errors.New(`plugin: router port ill-formed`)
-
-var defaultPluginSrv = &pluginSrv{
-	stdin: os.Stdin,
-	srv:   rpc.NewServer(),
-}
-
-func (p *pluginSrv) readRouterPort() (port string, err error) {
-	v := make(map[string]string)
-	p.mu.RLock()
-	err = json.NewDecoder(p.stdin).Decode(&v)
-	p.mu.RUnlock()
-	if err != nil {
-		return
-	}
-	port, ok := v["port"]
-	if !ok {
-		err = errRouterPort
-		return
-	}
-	if _, err = strconv.ParseUint(port, 10, 16); err != nil {
-		err = errRouterPort
-		return
-	}
-	return
-}
-
-func (p *pluginSrv) listenAndServe(rcrv interface{}) (err error) {
-	var routerPort string
-	if routerPort, err = p.readRouterPort(); err != nil {
-		return
-	}
-	var l net.Listener
-	if l, err = net.Listen("tcp", "localhost:0"); err != nil {
-		return
-	}
-	defer l.Close()
-	go p.serve(l)
-	var port string
-	if _, port, err = net.SplitHostPort(l.Addr().String()); err != nil {
-		return
-	}
-	var path string
-	if path, err = osext.Executable(); err != nil {
-		return
-	}
-	p.mu.Lock()
-	p.srv.Register(rcrv)
-	p.port = port
-	p.mu.Unlock()
-	var r *rpc.Client
-	if r, err = rpc.Dial("tcp", "localhost:"+routerPort); err != nil {
-		return
-	}
-	req := map[string]string{
-		"service": reflect.TypeOf(rcrv).Elem().Name(),
-		"port":    port,
-		"path":    path,
-	}
-	if err = r.Call("Router.Register", req, nil); err != nil {
-		return
-	}
-	req = make(map[string]string)
-	select {}
-}
-
-func (p *pluginSrv) serve(l net.Listener) {
+func (c *Connector) serve(p Plugin) {
+	srv := rpc.NewServer()
+	srv.Register(p)
 	for {
-		conn, err := l.Accept()
+		conn, err := c.Listener.Accept()
 		if err != nil {
 			log.Println(err)
 			continue
 		}
-		go p.srv.ServeConn(conn)
+		go srv.ServeConn(conn)
 	}
 }
 
-func ListenAndServe(rcrv interface{}) error {
-	return defaultPluginSrv.listenAndServe(rcrv)
+func (c *Connector) register(p Plugin) (string, error) {
+	_, port, err := net.SplitHostPort(c.Listener.Addr().String())
+	if err != nil {
+		return "", err
+	}
+	cli, err := rpc.Dial("tcp", c.RouterAddr)
+	if err != nil {
+		return "", err
+	}
+	cfg := map[string]string{
+		"id":      c.ID,
+		"service": reflect.TypeOf(p).Elem().Name(),
+		"addr":    "localhost" + port,
+	}
+	var version string
+	err = cli.Call("Router.Register", cfg, &version)
+	return version, err
+}
+
+func readUint16From(f *os.File) (string, error) {
+	if fi, err := f.Stat(); err != nil || fi.Size() == 0 {
+		return "", errRead
+	}
+	scan := bufio.NewScanner(f)
+	scan.Split(bufio.ScanWords)
+	if !scan.Scan() || scan.Err() != nil {
+		return "", errRead
+	}
+	t := scan.Text()
+	if _, err := strconv.ParseUint(t, 10, 16); err != nil {
+		return "", err
+	}
+	return t, nil
+}
+
+func newConnector(f *os.File) (c *Connector, err error) {
+	if c.ID, err = readUint16From(os.Stdin); err != nil {
+		return
+	}
+	if c.RouterAddr, err = readUint16From(os.Stdin); err != nil {
+		return
+	}
+	c.RouterAddr = "localhost:" + c.RouterAddr
+	c.Listener, err = net.Listen("tcp", "localhost:0")
+	return
+}
+
+func ListenAndServe(p Plugin) error {
+	c, err := newConnector(os.Stdin)
+	if err != nil {
+		return err
+	}
+	return Serve(c, p)
+}
+
+func Serve(c *Connector, p Plugin) error {
+	go c.serve(p)
+	defer c.Listener.Close()
+	if _, err := c.register(p); err != nil {
+		return err
+	}
+	select {}
 }
