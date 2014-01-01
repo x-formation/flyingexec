@@ -47,6 +47,7 @@ func (c *Connector) register(p Plugin) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	defer cli.Close()
 	cfg := map[string]string{
 		"id":      c.ID,
 		"service": reflect.TypeOf(p).Elem().Name(),
@@ -74,6 +75,7 @@ func readUint16From(f *os.File) (string, error) {
 }
 
 func newConnector(f *os.File) (c *Connector, err error) {
+	c := new(Connector)
 	if c.ID, err = readUint16From(os.Stdin); err != nil {
 		return
 	}
