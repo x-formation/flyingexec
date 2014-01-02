@@ -3,6 +3,7 @@ package plugin
 import (
 	"bufio"
 	"errors"
+	"io"
 	"log"
 	"net"
 	"net/rpc"
@@ -17,6 +18,11 @@ var errRead = errors.New("plugin: reading port and/or ID from stdin failed")
 
 type Plugin interface {
 	Init(routerAddr string, version *string) error
+}
+
+type StatReader interface {
+	Stat() (os.FileInfo, error)
+	io.Reader
 }
 
 type CallCloser interface {
@@ -66,11 +72,11 @@ func (c *Connector) register(p Plugin) (string, error) {
 	return version, err
 }
 
-func readUint16From(f *os.File) (string, error) {
-	if fi, err := f.Stat(); err != nil || fi.Size() == 0 {
+func readUint16From(r StatReader) (string, error) {
+	if fi, err := r.Stat(); err != nil || fi.Size() == 0 {
 		return "", errRead
 	}
-	scan := bufio.NewScanner(f)
+	scan := bufio.NewScanner(r)
 	scan.Split(bufio.ScanWords)
 	if !scan.Scan() || scan.Err() != nil {
 		return "", errRead
@@ -82,16 +88,16 @@ func readUint16From(f *os.File) (string, error) {
 	return t, nil
 }
 
-func newConnector(f *os.File) (c *Connector, err error) {
+func newConnector(r StatReader) (c *Connector, err error) {
 	c = &Connector{
 		Dial: func(network, address string) (CallCloser, error) {
 			return rpc.Dial(network, address)
 		},
 	}
-	if c.ID, err = readUint16From(os.Stdin); err != nil {
+	if c.ID, err = readUint16From(r); err != nil {
 		return
 	}
-	if c.RouterAddr, err = readUint16From(os.Stdin); err != nil {
+	if c.RouterAddr, err = readUint16From(r); err != nil {
 		return
 	}
 	c.RouterAddr = "localhost:" + c.RouterAddr
