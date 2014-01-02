@@ -24,25 +24,15 @@ gpff-env() {
   }
   local src=${TOP}/src/github.com/rjeczalik
   local alias=${TOP}/src
-  test -d "${src}/gpff" || {
+  test -d "${src}/gpf" || {
     mkdir -p "${src}"; (
-      cd "${src}"; ln -sf ../../../ gpff
+      cd "${src}"; ln -sf ../../../ gpf
     )
   }
-  test -d "${alias}/gpff" || (
-    cd "${alias}"; ln -sf ../ gpff
+  test -d "${alias}/gpf" || (
+    cd "${alias}"; ln -sf ../ gpf
   )
   export GOPATH
 }
 
-gpff-dep() {
-  local deps=(
-    "bitbucket.org/kardianos/osext"
-  )
-  for i in ${!deps[@]}; do
-    go get "${deps[${i}]}"
-  done
-}
-
 gpff-env
-gpff-dep
