@@ -3,13 +3,14 @@ package plugin
 import (
 	"bufio"
 	"errors"
-	"io"
 	"log"
 	"net"
 	"net/rpc"
 	"os"
 	"reflect"
 	"strconv"
+
+	"github.com/rjeczalik/gpf"
 )
 
 const NonVersioned = "non-versioned"
@@ -20,23 +21,11 @@ type Plugin interface {
 	Init(routerAddr string, version *string) error
 }
 
-type StatReader interface {
-	Stat() (os.FileInfo, error)
-	io.Reader
-}
-
-type CallCloser interface {
-	Call(serviceMethod string, args interface{}, reply interface{}) error
-	Close() error
-}
-
-type Dialer func(string, string) (CallCloser, error)
-
 type Connector struct {
 	ID         string
 	RouterAddr string
 	Listener   net.Listener
-	Dial       Dialer
+	Dial       gpf.Dialer
 }
 
 func (c *Connector) serve(p Plugin) {
@@ -72,7 +61,7 @@ func (c *Connector) register(p Plugin) (string, error) {
 	return version, err
 }
 
-func readUint16From(r StatReader) (string, error) {
+func readUint16From(r gpf.StatReader) (string, error) {
 	if fi, err := r.Stat(); err != nil || fi.Size() == 0 {
 		return "", errRead
 	}
@@ -88,9 +77,9 @@ func readUint16From(r StatReader) (string, error) {
 	return t, nil
 }
 
-func newConnector(r StatReader) (c *Connector, err error) {
+func newConnector(r gpf.StatReader) (c *Connector, err error) {
 	c = &Connector{
-		Dial: func(network, address string) (CallCloser, error) {
+		Dial: func(network, address string) (gpf.CallCloser, error) {
 			return rpc.Dial(network, address)
 		},
 	}
