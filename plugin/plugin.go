@@ -19,10 +19,18 @@ type Plugin interface {
 	Init(routerAddr string, version *string) error
 }
 
+type CallCloser interface {
+	Call(serviceMethod string, args interface{}, reply interface{}) error
+	Close() error
+}
+
+type Dialer func(string, string) (CallCloser, error)
+
 type Connector struct {
 	ID         string
 	RouterAddr string
 	Listener   net.Listener
+	Dial       Dialer
 }
 
 func (c *Connector) serve(p Plugin) {
@@ -43,7 +51,7 @@ func (c *Connector) register(p Plugin) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	cli, err := rpc.Dial("tcp", c.RouterAddr)
+	cli, err := c.Dial("tcp", c.RouterAddr)
 	if err != nil {
 		return "", err
 	}
@@ -75,7 +83,11 @@ func readUint16From(f *os.File) (string, error) {
 }
 
 func newConnector(f *os.File) (c *Connector, err error) {
-	c := new(Connector)
+	c = &Connector{
+		Dial: func(network, address string) (CallCloser, error) {
+			return rpc.Dial(network, address)
+		},
+	}
 	if c.ID, err = readUint16From(os.Stdin); err != nil {
 		return
 	}
