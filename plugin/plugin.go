@@ -13,8 +13,6 @@ import (
 	"github.com/rjeczalik/gpf"
 )
 
-const NonVersioned = "non-versioned"
-
 var errRead = errors.New("plugin: reading port and/or ID from stdin failed")
 
 type Plugin interface {
@@ -61,20 +59,24 @@ func (c *Connector) register(p Plugin) (string, error) {
 	return version, err
 }
 
-func readUint16From(r gpf.StatReader) (string, error) {
+func readUintFrom(r gpf.StatReader, count int) (arr []string, err error) {
 	if fi, err := r.Stat(); err != nil || fi.Size() == 0 {
-		return "", errRead
+		return nil, errRead
 	}
 	scan := bufio.NewScanner(r)
 	scan.Split(bufio.ScanWords)
-	if !scan.Scan() || scan.Err() != nil {
-		return "", errRead
+	arr = make([]string, 0, count)
+	for scan.Scan() && count > 0 {
+		arr = append(arr, scan.Text())
+		if _, err = strconv.ParseUint(arr[len(arr)-1], 10, 16); err != nil {
+			return
+		}
+		count -= 1
 	}
-	t := scan.Text()
-	if _, err := strconv.ParseUint(t, 10, 16); err != nil {
-		return "", err
+	if scan.Err() != nil || count != 0 {
+		err = errRead
 	}
-	return t, nil
+	return
 }
 
 func newConnector(r gpf.StatReader) (c *Connector, err error) {
@@ -83,13 +85,12 @@ func newConnector(r gpf.StatReader) (c *Connector, err error) {
 			return rpc.Dial(network, address)
 		},
 	}
-	if c.ID, err = readUint16From(r); err != nil {
+	var arr []string
+	if arr, err = readUintFrom(r, 2); err != nil {
+		err = errRead
 		return
 	}
-	if c.RouterAddr, err = readUint16From(r); err != nil {
-		return
-	}
-	c.RouterAddr = "localhost:" + c.RouterAddr
+	c.ID, c.RouterAddr = arr[0], "localhost:"+arr[1]
 	c.Listener, err = net.Listen("tcp", "localhost:0")
 	return
 }

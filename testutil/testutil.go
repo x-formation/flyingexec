@@ -6,8 +6,10 @@ import (
 	"os"
 	"os/signal"
 	"runtime"
-	"sync"
 	"testing"
+	"time"
+
+	"github.com/rjeczalik/gpf"
 )
 
 func stack(full bool) string {
@@ -37,21 +39,38 @@ func GuardPanic(t *testing.T) {
 	}
 }
 
-type SyncBuffer struct {
-	b bytes.Buffer
-	m sync.RWMutex
+type Buffer struct {
+	*bytes.Buffer
 }
 
-func (b *SyncBuffer) Read(p []byte) (n int, err error) {
-	b.m.RLock()
-	n, err = b.b.Read(p)
-	b.m.RUnlock()
+func (b *Buffer) Name() (s string) {
 	return
 }
 
-func (b *SyncBuffer) Write(p []byte) (n int, err error) {
-	b.m.Lock()
-	n, err = b.b.Write(p)
-	b.m.Unlock()
+func (b *Buffer) Size() int64 {
+	return int64(b.Len())
+}
+
+func (b *Buffer) Mode() (mode os.FileMode) {
 	return
+}
+
+func (b *Buffer) ModTime() (t time.Time) {
+	return
+}
+
+func (b *Buffer) IsDir() (dir bool) {
+	return
+}
+
+func (b *Buffer) Sys() (v interface{}) {
+	return
+}
+
+func (b *Buffer) Stat() (os.FileInfo, error) {
+	return b, nil
+}
+
+func NewStatReader(s string) gpf.StatReader {
+	return &Buffer{bytes.NewBufferString(s)}
 }

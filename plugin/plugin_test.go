@@ -1,60 +1,47 @@
 package plugin
 
 import (
-	"encoding/json"
-	"io"
-	"net/rpc"
-	"os"
 	"testing"
 
-	"github.com/rjeczalik/gpff/testext"
+	"github.com/rjeczalik/gpf/testutil"
 )
 
 func init() {
-	testext.WatchInterrupt()
+	testutil.WatchInterrupt()
 }
 
-func setup(t *testing.T) func() {
-	stdout, stderr = new(testext.SyncBuffer), new(testext.SyncBuffer)
-	return func() {
-		stdout = os.Stdout
-		stderr = os.Stderr
-		testext.GuardPanic(t)
+func TestRead(t *testing.T) {
+	defer testutil.GuardPanic(t)
+	table := []struct {
+		input string
+		err   error
+		token []string
+	}{
+		{"8080 1", nil, []string{"8080", "1"}},
+		{"33305 510 1234 135", nil, []string{"33305", "510"}},
+		{"6600 0", nil, []string{"6600", "0"}},
+		{"55695 43002 qwe qw", nil, []string{"55695", "43002"}},
+		{"", errRead, nil},
+		{"asd", errRead, nil},
+		{"13123", errRead, nil},
+		{"65560 123", errRead, nil},
+		{"123 -1", errRead, nil},
+		{"2342 qwe", errRead, nil},
 	}
-}
-
-type Add struct{}
-
-func (a Add) One(req, res *int) (err error) {
-	*res = *req + 1
-	return
-}
-
-func Test(t *testing.T) {
-	cleanup := setup(t)
-	defer cleanup()
-
-	dec := json.NewDecoder(io.MultiReader(stdout, stderr))
-
-	go Serve(new(Add))
-
-	v := make(map[string]string)
-	if err := dec.Decode(&v); err != nil {
-		t.Fatalf("expected err to be nil, was %q instead", err)
-	}
-	port, ok := v["port"]
-	if !ok {
-		t.Fatal(`expected v to hold a "port" key`)
-	}
-	c, err := rpc.Dial("tcp", "localhost:"+port)
-	if err != nil {
-		t.Fatalf("expected err to be nil, was %q instead", err)
-	}
-	var res int
-	if err = c.Call("Add.One", 10, &res); err != nil {
-		t.Fatalf("expected err to be nil, was %q instead", err)
-	}
-	if res != 11 {
-		t.Errorf("expected res to be 11, was %q instead", res)
+	for _, row := range table {
+		c, err := newConnector(testutil.NewStatReader(row.input))
+		if err != row.err {
+			t.Errorf("expected %q, got %q instead", row.err, err)
+			continue
+		}
+		if err == nil {
+			if c.ID != row.token[0] {
+				t.Errorf("expected %q, got %q instead", row.token[0], c.RouterAddr)
+			}
+			if c.RouterAddr != "localhost:"+row.token[1] {
+				t.Errorf("expected localhost:%s, got %q instead", row.token[1], c.RouterAddr)
+			}
+			c.Listener.Close()
+		}
 	}
 }
