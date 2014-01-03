@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/rjeczalik/gpf"
+	"github.com/rjeczalik/gpf/util"
 )
 
 func stack(full bool) string {
@@ -71,6 +71,6 @@ func (b *Buffer) Stat() (os.FileInfo, error) {
 	return b, nil
 }
 
-func NewStatReader(s string) gpf.StatReader {
+func NewStatReader(s string) util.StatReader {
 	return &Buffer{bytes.NewBufferString(s)}
 }

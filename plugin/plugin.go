@@ -10,7 +10,7 @@ import (
 	"reflect"
 	"strconv"
 
-	"github.com/rjeczalik/gpf"
+	"github.com/rjeczalik/gpf/util"
 )
 
 var errRead = errors.New("plugin: reading port and/or ID from stdin failed")
@@ -23,7 +23,7 @@ type Connector struct {
 	ID         string
 	RouterAddr string
 	Listener   net.Listener
-	Dial       gpf.Dialer
+	Dial       util.Dialer
 }
 
 func (c *Connector) serve(p Plugin) {
@@ -59,7 +59,7 @@ func (c *Connector) register(p Plugin) (string, error) {
 	return version, err
 }
 
-func readUintFrom(r gpf.StatReader, count int) (arr []string, err error) {
+func readUintFrom(r util.StatReader, count int) (arr []string, err error) {
 	if fi, err := r.Stat(); err != nil || fi.Size() == 0 {
 		return nil, errRead
 	}
@@ -79,9 +79,9 @@ func readUintFrom(r gpf.StatReader, count int) (arr []string, err error) {
 	return
 }
 
-func newConnector(r gpf.StatReader) (c *Connector, err error) {
+func newConnector(r util.StatReader) (c *Connector, err error) {
 	c = &Connector{
-		Dial: func(network, address string) (gpf.CallCloser, error) {
+		Dial: func(network, address string) (util.CallCloser, error) {
 			return rpc.Dial(network, address)
 		},
 	}
