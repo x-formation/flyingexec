@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"strconv"
 
+	"github.com/rjeczalik/gpf/router"
 	"github.com/rjeczalik/gpf/util"
 )
 
@@ -20,7 +21,7 @@ type Plugin interface {
 }
 
 type Connector struct {
-	ID         string
+	ID         uint16
 	RouterAddr string
 	Listener   net.Listener
 	Dial       util.Dialer
@@ -40,22 +41,23 @@ func (c *Connector) serve(p Plugin) {
 }
 
 func (c *Connector) register(p Plugin) (string, error) {
-	_, port, err := net.SplitHostPort(c.Listener.Addr().String())
+	_, por, err := net.SplitHostPort(c.Listener.Addr().String())
 	if err != nil {
 		return "", err
 	}
+	port, _ := strconv.Atoi(por)
 	cli, err := c.Dial("tcp", c.RouterAddr)
 	if err != nil {
 		return "", err
 	}
 	defer cli.Close()
-	cfg := map[string]string{
-		"id":      c.ID,
-		"service": reflect.TypeOf(p).Elem().Name(),
-		"addr":    "localhost" + port,
+	req := router.RegisterRequest{
+		ID:      c.ID,
+		Service: reflect.TypeOf(p).Elem().Name(),
+		Port:    uint16(port),
 	}
 	var version string
-	err = cli.Call("Router.Register", cfg, &version)
+	err = cli.Call("Router.Register", req, &version)
 	return version, err
 }
 
@@ -90,7 +92,8 @@ func newConnector(r util.StatReader) (c *Connector, err error) {
 		err = errRead
 		return
 	}
-	c.ID, c.RouterAddr = arr[0], "localhost:"+arr[1]
+	id, _ := strconv.Atoi(arr[0])
+	c.ID, c.RouterAddr = uint16(id), "localhost:"+arr[1]
 	c.Listener, err = net.Listen("tcp", "localhost:0")
 	return
 }

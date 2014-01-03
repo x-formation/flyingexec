@@ -13,27 +13,38 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"bitbucket.org/kardianos/osext"
+	"github.com/rjeczalik/gpf/util"
 )
 
+type RegisterRequest struct {
+	ID      uint16
+	Service string
+	Port    uint16
+}
+
+func (req *RegisterRequest) valid() bool {
+	return req.ID > 0 && len(req.Service) > 0 && req.Port > 0
+}
+
 type plugin struct {
+	id      uint16
 	service string
 	version string
 	port    string
 	cmd     *exec.Cmd
-	buf     *bytes.Buffer
-	client  *rpc.Client
+	log     *os.File
 	err     error
 }
 
 func (p *plugin) String() string {
-	return fmt.Sprintf("service %q (version=%s, path=%s), listening on localhost:%s",
-		p.service, p.version, p.cmd.Path, p.port)
+	return fmt.Sprintf("service %q (id=%u, path=%s, version=%s), listening on localhost:%s",
+		p.id, p.service, p.cmd.Path, p.version, p.port)
 }
 
 var errRegisterReq = errors.New(`router: register request ill-formed`)
@@ -57,18 +68,15 @@ func (ra *routerAdmin) serve(l net.Listener) {
 	}
 }
 
-func (ra *routerAdmin) Register(req *map[string]string, _ *int) (err error) {
-	for _, k := range []string{"service", "port", "path"} {
-		if v, ok := (*req)[k]; !ok || len(v) == 0 {
-			err = errRegisterReq
-			return
-		}
+func (ra *routerAdmin) Register(req RegisterRequest, _ *struct{}) (err error) {
+	if !req.valid() {
+		return errRegisterReq
 	}
 	ra.rt.mu.RLock()
-	p, ok := ra.rt.pending[(*req)["path"]]
+	p, ok := ra.rt.pending[req.ID]
 	ra.rt.mu.RUnlock()
 	if !ok {
-		err = fmt.Errorf("router: no plugin awaiting registration for path %s", (*req)["path"])
+		err = fmt.Errorf("router: no plugin awaiting registration with ID=%s", req.ID)
 		return
 	}
 	defer func() {
@@ -81,32 +89,16 @@ func (ra *routerAdmin) Register(req *map[string]string, _ *int) (err error) {
 			ra.rt.invalid <- p
 		}
 	}()
-	var client *rpc.Client
-	if client, err = rpc.Dial("tcp", "localhost:"+(*req)["port"]); err != nil {
-		return
-	}
-	var port string
-	if err = client.Call((*req)["service"]+".Port", "", &port); err != nil {
-		return
-	}
-	if port != (*req)["port"] {
-		err = fmt.Errorf("router: ports do not match: Router.Register=%s and %s.Port=%s",
-			(*req)["port"], (*req)["service"], port)
+	cli, port := (*rpc.Client)(nil), strconv.Itoa(int(req.Port))
+	if cli, err = rpc.Dial("tcp", "localhost:"+port); err != nil {
 		return
 	}
 	var version string
-	if err = client.Call((*req)["service"]+".Version", "", &version); err != nil {
-		return
-	}
-	if len(version) == 0 {
-		err = errPluginVersion
+	if err = cli.Call(req.Service+".Init", "localhost:"+ra.port, &version); err != nil {
 		return
 	}
 	ra.rt.mu.Lock()
-	p.service = (*req)["service"]
-	p.version = version
-	p.port = port
-	p.client = client
+	p.service, p.version, p.port = req.Service, version, port
 	ra.rt.mu.Unlock()
 	return
 }
@@ -115,9 +107,10 @@ type Router struct {
 	admin   *routerAdmin
 	mu      sync.RWMutex
 	plugins map[string]*plugin
-	pending map[string]*plugin
+	pending map[uint16]*plugin
 	valid   chan *plugin
 	invalid chan *plugin
+	counter util.Counter
 }
 
 func (rt *Router) loadPlugins() (err error) {
@@ -133,20 +126,19 @@ func (rt *Router) loadPlugins() (err error) {
 	if plugins, err = ioutil.ReadDir(pluginDir); err != nil {
 		return
 	}
-	var portJSON = []byte(`{"port":"` + rt.admin.port + `"}` + "\r\n")
 	for _, p := range plugins {
-		var err error
-		var f io.Writer
-		logFile, buf := filepath.Join(logDir, p.Name()+".log"), new(bytes.Buffer)
-		var output io.Writer = buf
-		cmd := exec.Command(filepath.Join(pluginDir, p.Name()))
-		if f, err = os.OpenFile(logFile, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0644); err == nil {
-			output = io.MultiWriter(buf, f)
+		if !p.IsDir() {
+			logFile := filepath.Join(logDir, p.Name()+".log")
+			p := &plugin{
+				id:  uint16(rt.counter.Next()),
+				cmd: exec.Command(filepath.Join(pluginDir, p.Name())),
+			}
+			if p.log, p.err = os.OpenFile(logFile, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0644); p.err == nil {
+				p.cmd.Stdout, p.cmd.Stderr = p.log, p.log
+			}
+			p.cmd.Stdin = bytes.NewReader([]byte(rt.admin.port + " " + strconv.Itoa(int(p.id))))
+			go rt.run(p)
 		}
-		cmd.Stdout = output
-		cmd.Stderr = output
-		cmd.Stdin = bytes.NewReader(portJSON)
-		go rt.run(&plugin{"", "", "", cmd, buf, nil, err})
 	}
 	return
 }
@@ -162,7 +154,7 @@ func (rt *Router) daemon() {
 
 func (rt *Router) run(p *plugin) {
 	rt.mu.Lock()
-	rt.pending[p.cmd.Path] = p
+	rt.pending[p.id] = p
 	rt.mu.Unlock()
 	if err := p.cmd.Start(); err != nil {
 		p.err = err
@@ -193,26 +185,15 @@ func (rt *Router) add(p *plugin) {
 	}
 	rt.mu.Lock()
 	rt.plugins[p.service] = p
-	delete(rt.pending, p.cmd.Path)
+	delete(rt.pending, p.id)
 	rt.mu.Unlock()
-	defer func() {
-		p.client.Close()
-		p.client = nil
-	}()
-	var res string
-	if err := p.client.Call(p.service+".Init", "", &res); err != nil {
-		log.Printf("error initializing plugin %q: error=%q, combined output=%q",
-			p.service, err.Error(), string(p.buf.Bytes()))
-		rt.remove(p)
-		return
-	}
 	log.Printf("plugin successfully added: %s", p)
 }
 
 func (rt *Router) remove(p *plugin) {
 	rt.mu.Lock()
 	err := p.err
-	delete(rt.pending, p.cmd.Path)
+	delete(rt.pending, p.id)
 	rt.mu.Unlock()
 	if len(p.service) > 0 && err == nil {
 		rt.mu.Lock()
@@ -220,10 +201,7 @@ func (rt *Router) remove(p *plugin) {
 		rt.mu.Unlock()
 		log.Printf("plugin successfully removed: %s", p)
 	} else {
-		rt.mu.RLock()
-		output, path, err := string(p.buf.Bytes()), p.cmd.Path, p.err.Error()
-		rt.mu.RUnlock()
-		log.Printf("error running plugin %s: error=%q, combined output=%q", path, err, output)
+		log.Printf("error running plugin: %s", p)
 	}
 }
 
@@ -311,7 +289,7 @@ func (rt *Router) ListenAndServe(addr string) (err error) {
 func NewRouter() (rt *Router) {
 	rt = &Router{
 		plugins: make(map[string]*plugin),
-		pending: make(map[string]*plugin),
+		pending: make(map[uint16]*plugin),
 		valid:   make(chan *plugin),
 		invalid: make(chan *plugin),
 	}
