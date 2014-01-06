@@ -13,7 +13,7 @@ case "$(uname)" in
     ;;
 esac
 
-gpff-env() {
+flyingexec-env() {
   unset GOBIN
   test -z "${GOPATH}" && {
     GOPATH=${TOP}
@@ -24,15 +24,15 @@ gpff-env() {
   }
   local src=${TOP}/src/github.com/rjeczalik
   local alias=${TOP}/src
-  test -d "${src}/gpf" || {
+  test -d "${src}/flyingexec" || {
     mkdir -p "${src}"; (
-      cd "${src}"; ln -sf ../../../ gpf
+      cd "${src}"; ln -sf ../../../ flyingexec
     )
   }
-  test -d "${alias}/gpf" || (
-    cd "${alias}"; ln -sf ../ gpf
+  test -d "${alias}/flyingexec" || (
+    cd "${alias}"; ln -sf ../ flyingexec
   )
   export GOPATH
 }
 
-gpff-env
+flyingexec-env

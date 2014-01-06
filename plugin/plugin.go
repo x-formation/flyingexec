@@ -10,8 +10,8 @@ import (
 	"reflect"
 	"strconv"
 
-	"github.com/rjeczalik/gpf/router"
-	"github.com/rjeczalik/gpf/util"
+	"github.com/rjeczalik/flyingexec/router"
+	"github.com/rjeczalik/flyingexec/util"
 )
 
 var errRead = errors.New("plugin: reading port and/or ID from stdin failed")

@@ -5,7 +5,7 @@ import (
 	"log"
 	"os"
 
-	"github.com/rjeczalik/gpff/router"
+	"github.com/rjeczalik/flyingexec/router"
 )
 
 var addr string

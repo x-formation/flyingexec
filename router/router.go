@@ -19,7 +19,7 @@ import (
 	"time"
 
 	"bitbucket.org/kardianos/osext"
-	"github.com/rjeczalik/gpf/util"
+	"github.com/rjeczalik/flyingexec/util"
 )
 
 type RegisterRequest struct {

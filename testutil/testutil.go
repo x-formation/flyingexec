@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/rjeczalik/gpf/util"
+	"github.com/rjeczalik/flyingexec/util"
 )
 
 func stack(full bool) string {
