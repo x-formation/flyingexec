@@ -43,8 +43,15 @@ type plugin struct {
 }
 
 func (p *plugin) String() string {
-	return fmt.Sprintf("service %q (id=%u, path=%s, version=%s), listening on localhost:%s",
-		p.id, p.service, p.cmd.Path, p.version, p.port)
+	cmd, log := "<invalid>", "<invalid>"
+	if p.cmd != nil {
+		cmd = p.cmd.Path
+	}
+	if p.log != nil {
+		log = p.log.Name()
+	}
+	return fmt.Sprintf("service %q (id=%d, path=%s, log=%s, version=%s), listening on localhost:%s",
+		p.service, p.id, cmd, log, p.version, p.port)
 }
 
 var errRegisterReq = errors.New(`router: register request ill-formed`)
