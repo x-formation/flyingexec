@@ -51,60 +51,77 @@ var errRegisterReq = errors.New(`router: register request ill-formed`)
 var errPluginVersion = errors.New(`router: plugin version empty`)
 var errTimeout = errors.New(`router: awaiting registration to complete has timed out`)
 
-type routerAdmin struct {
-	rt   *Router
-	port string
-	srv  *rpc.Server
+type Admin struct {
+	rt       *Router
+	Listener net.Listener
+	Dialer   util.Dialer
 }
 
-func (ra *routerAdmin) serve(l net.Listener) {
+func (a *Admin) serve() {
+	srv := rpc.NewServer()
+	srv.RegisterName("Router", a)
+	log.Println("router admin service listening on", a.Listener.Addr().String(), ". . .")
 	for {
-		conn, err := l.Accept()
+		conn, err := a.Listener.Accept()
 		if err != nil {
-			fmt.Println(err)
+			log.Println(err)
 			continue
 		}
-		go ra.srv.ServeConn(conn)
+		go srv.ServeConn(conn)
 	}
 }
 
-func (ra *routerAdmin) Register(req RegisterRequest, _ *struct{}) (err error) {
+func (a *Admin) listenAndServe() (err error) {
+	if a.Listener, err = net.Listen("tcp", "localhost:0"); err != nil {
+		return
+	}
+	go a.serve()
+	if err = a.rt.loadPlugins(); err != nil {
+		return
+	}
+	return
+}
+
+func (a *Admin) Register(req RegisterRequest, _ *struct{}) (err error) {
 	if !req.valid() {
 		return errRegisterReq
 	}
-	ra.rt.mu.RLock()
-	p, ok := ra.rt.pending[req.ID]
-	ra.rt.mu.RUnlock()
+	a.rt.mu.RLock()
+	p, ok := a.rt.pending[req.ID]
+	a.rt.mu.RUnlock()
 	if !ok {
 		err = fmt.Errorf("router: no plugin awaiting registration with ID=%s", req.ID)
 		return
 	}
 	defer func() {
 		if err == nil {
-			ra.rt.valid <- p
+			a.rt.valid <- p
 		} else {
-			ra.rt.mu.Lock()
+			a.rt.mu.Lock()
 			p.err = err
-			ra.rt.mu.Unlock()
-			ra.rt.invalid <- p
+			a.rt.mu.Unlock()
+			a.rt.invalid <- p
 		}
 	}()
-	cli, port := (*rpc.Client)(nil), strconv.Itoa(int(req.Port))
-	if cli, err = rpc.Dial("tcp", "localhost:"+port); err != nil {
+	var port = strconv.Itoa(int(req.Port))
+	var conn io.ReadWriteCloser
+	if conn, err = a.Dialer.Dial("tcp", "localhost:"+port); err != nil {
 		return
 	}
 	var version string
-	if err = cli.Call(req.Service+".Init", "localhost:"+ra.port, &version); err != nil {
+	var cli = rpc.NewClient(conn)
+	defer cli.Close()
+	if err = cli.Call(req.Service+".Init", a.Listener.Addr().String(), &version); err != nil {
 		return
 	}
-	ra.rt.mu.Lock()
+	a.rt.mu.Lock()
 	p.service, p.version, p.port = req.Service, version, port
-	ra.rt.mu.Unlock()
+	a.rt.mu.Unlock()
 	return
 }
 
 type Router struct {
-	admin   *routerAdmin
+	admin   *Admin
 	mu      sync.RWMutex
 	plugins map[string]*plugin
 	pending map[uint16]*plugin
@@ -114,8 +131,11 @@ type Router struct {
 }
 
 func (rt *Router) loadPlugins() (err error) {
-	var dir string
+	var dir, port string
 	if dir, err = osext.ExecutableFolder(); err != nil {
+		return
+	}
+	if _, port, err = net.SplitHostPort(rt.admin.Listener.Addr().String()); err != nil {
 		return
 	}
 	pluginDir := filepath.Join(dir, "plugins")
@@ -136,7 +156,7 @@ func (rt *Router) loadPlugins() (err error) {
 			if p.log, p.err = os.OpenFile(logFile, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0644); p.err == nil {
 				p.cmd.Stdout, p.cmd.Stderr = p.log, p.log
 			}
-			p.cmd.Stdin = bytes.NewReader([]byte(rt.admin.port + " " + strconv.Itoa(int(p.id))))
+			p.cmd.Stdin = bytes.NewReader([]byte(port + " " + strconv.Itoa(int(p.id))))
 			go rt.run(p)
 		}
 	}
@@ -248,24 +268,6 @@ func (rt *Router) routeConn(conn io.ReadWriteCloser) {
 	conn.Close()
 }
 
-func (ra *routerAdmin) listenAndServe() (err error) {
-	var l net.Listener
-	if l, err = net.Listen("tcp", "localhost:0"); err != nil {
-		return
-	}
-	if _, ra.port, err = net.SplitHostPort(l.Addr().String()); err != nil {
-		return
-	}
-	ra.srv.RegisterName("Router", ra)
-	go ra.rt.daemon()
-	go ra.serve(l)
-	if err = ra.rt.loadPlugins(); err != nil {
-		return
-	}
-	log.Println("router admin service listening on localhost:"+ra.port, ". . .")
-	return
-}
-
 func (rt *Router) ListenAndServe(addr string) (err error) {
 	if err = rt.admin.listenAndServe(); err != nil {
 		return
@@ -274,6 +276,7 @@ func (rt *Router) ListenAndServe(addr string) (err error) {
 	if l, err = net.Listen("tcp", addr); err != nil {
 		return
 	}
+	go rt.daemon()
 	log.Println("router listening on", l.Addr().String(), ". . .")
 	for {
 		conn, err := l.Accept()
@@ -293,6 +296,10 @@ func NewRouter() (rt *Router) {
 		valid:   make(chan *plugin),
 		invalid: make(chan *plugin),
 	}
-	rt.admin = &routerAdmin{rt, "", rpc.NewServer()}
+	rt.admin = &Admin{
+		rt:       rt,
+		Listener: nil,
+		Dialer:   util.DefaultDialer,
+	}
 	return
 }
