@@ -40,16 +40,16 @@ func (c *Connector) serve(p Plugin) {
 	}
 }
 
-func (c *Connector) register(p Plugin) (string, error) {
+func (c *Connector) register(p Plugin) error {
 	_, por, err := net.SplitHostPort(c.Listener.Addr().String())
 	if err != nil {
-		return "", err
+		return err
 	}
 	port, _ := strconv.Atoi(por)
 	conn, err := c.Dialer.Dial("tcp", c.RouterAddr)
 	cli := rpc.NewClient(conn)
 	if err != nil {
-		return "", err
+		return err
 	}
 	defer cli.Close()
 	req := router.RegisterRequest{
@@ -57,9 +57,7 @@ func (c *Connector) register(p Plugin) (string, error) {
 		Service: reflect.TypeOf(p).Elem().Name(),
 		Port:    uint16(port),
 	}
-	var version string
-	err = cli.Call("Router.Register", req, &version)
-	return version, err
+	return cli.Call("Router.Register", req, nil)
 }
 
 func readUintFrom(r util.StatReader, count int) (arr []string, err error) {
@@ -91,6 +89,7 @@ func newConnector(r util.StatReader) (c *Connector, err error) {
 	}
 	id, _ := strconv.Atoi(arr[1])
 	c.ID, c.RouterAddr = uint16(id), "localhost:"+arr[0]
+	c.Listener, err = net.Listen("tcp", "localhost:0")
 	return
 }
 
@@ -104,11 +103,8 @@ func ListenAndServe(p Plugin) error {
 
 func Serve(c *Connector, p Plugin) (err error) {
 	go c.serve(p)
-	if c.Listener, err = net.Listen("tcp", "localhost:0"); err != nil {
-		return
-	}
 	defer c.Listener.Close()
-	if _, err = c.register(p); err != nil {
+	if err = c.register(p); err != nil {
 		return
 	}
 	select {}
