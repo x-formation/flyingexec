@@ -89,8 +89,8 @@ func newConnector(r util.StatReader) (c *Connector, err error) {
 		err = errRead
 		return
 	}
-	id, _ := strconv.Atoi(arr[0])
-	c.ID, c.RouterAddr = uint16(id), "localhost:"+arr[1]
+	id, _ := strconv.Atoi(arr[1])
+	c.ID, c.RouterAddr = uint16(id), "localhost:"+arr[0]
 	return
 }
 
