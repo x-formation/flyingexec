@@ -2,6 +2,7 @@ package util
 
 import (
 	"io"
+	"net"
 	"os"
 	"sync/atomic"
 )
@@ -16,7 +17,17 @@ type CallCloser interface {
 	Close() error
 }
 
-type Dialer func(string, string) (CallCloser, error)
+type Dialer interface {
+	Dial(network, address string) (io.ReadWriteCloser, error)
+}
+
+type NetDialer struct{}
+
+func (d NetDialer) Dial(network, address string) (io.ReadWriteCloser, error) {
+	return net.Dial(network, address)
+}
+
+var DefaultDialer = new(NetDialer)
 
 type Counter uint32
 

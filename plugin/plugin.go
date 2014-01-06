@@ -24,7 +24,7 @@ type Connector struct {
 	ID         uint16
 	RouterAddr string
 	Listener   net.Listener
-	Dial       util.Dialer
+	Dialer     util.Dialer
 }
 
 func (c *Connector) serve(p Plugin) {
@@ -46,7 +46,8 @@ func (c *Connector) register(p Plugin) (string, error) {
 		return "", err
 	}
 	port, _ := strconv.Atoi(por)
-	cli, err := c.Dial("tcp", c.RouterAddr)
+	conn, err := c.Dialer.Dial("tcp", c.RouterAddr)
+	cli := rpc.NewClient(conn)
 	if err != nil {
 		return "", err
 	}
@@ -82,11 +83,7 @@ func readUintFrom(r util.StatReader, count int) (arr []string, err error) {
 }
 
 func newConnector(r util.StatReader) (c *Connector, err error) {
-	c = &Connector{
-		Dial: func(network, address string) (util.CallCloser, error) {
-			return rpc.Dial(network, address)
-		},
-	}
+	c = &Connector{Dialer: util.DefaultDialer}
 	var arr []string
 	if arr, err = readUintFrom(r, 2); err != nil {
 		err = errRead
@@ -94,7 +91,6 @@ func newConnector(r util.StatReader) (c *Connector, err error) {
 	}
 	id, _ := strconv.Atoi(arr[0])
 	c.ID, c.RouterAddr = uint16(id), "localhost:"+arr[1]
-	c.Listener, err = net.Listen("tcp", "localhost:0")
 	return
 }
 
@@ -106,11 +102,14 @@ func ListenAndServe(p Plugin) error {
 	return Serve(c, p)
 }
 
-func Serve(c *Connector, p Plugin) error {
+func Serve(c *Connector, p Plugin) (err error) {
 	go c.serve(p)
+	if c.Listener, err = net.Listen("tcp", "localhost:0"); err != nil {
+		return
+	}
 	defer c.Listener.Close()
-	if _, err := c.register(p); err != nil {
-		return err
+	if _, err = c.register(p); err != nil {
+		return
 	}
 	select {}
 }
