@@ -22,6 +22,10 @@ import (
 	"github.com/rjeczalik/flyingexec/util"
 )
 
+var errRegisterReq = errors.New(`router: register request ill-formed`)
+var errPluginVersion = errors.New(`router: plugin version empty`)
+var errTimeout = errors.New(`router: awaiting registration to complete has timed out`)
+
 type RegisterRequest struct {
 	ID      uint16
 	Service string
@@ -30,6 +34,64 @@ type RegisterRequest struct {
 
 func (req *RegisterRequest) valid() bool {
 	return req.ID > 0 && len(req.Service) > 0 && req.Port > 0
+}
+
+type admin struct {
+	rt       *Router
+	Listener net.Listener
+	Dialer   util.Dialer
+}
+
+func (a *admin) serve() {
+	srv := rpc.NewServer()
+	srv.RegisterName("Router", a)
+	log.Println("router admin service listening on", a.Listener.Addr().String(), ". . .")
+	for {
+		conn, err := a.Listener.Accept()
+		if err != nil {
+			log.Println(err)
+			continue
+		}
+		go srv.ServeConn(conn)
+	}
+}
+
+func (a *admin) Register(req RegisterRequest, _ *struct{}) (err error) {
+	if !req.valid() {
+		return errRegisterReq
+	}
+	a.rt.mu.RLock()
+	p, ok := a.rt.pending[req.ID]
+	a.rt.mu.RUnlock()
+	if !ok {
+		err = fmt.Errorf("router: no plugin awaiting registration with ID=%s", req.ID)
+		return
+	}
+	defer func() {
+		if err == nil {
+			a.rt.valid <- p
+		} else {
+			a.rt.mu.Lock()
+			p.err = err
+			a.rt.mu.Unlock()
+			a.rt.invalid <- p
+		}
+	}()
+	var port = strconv.Itoa(int(req.Port))
+	conn, err := a.Dialer.Dial("tcp", "localhost:"+port)
+	if err != nil {
+		return
+	}
+	var version string
+	var cli = rpc.NewClient(conn)
+	defer cli.Close()
+	if err = cli.Call(req.Service+".Init", a.Listener.Addr().String(), &version); err != nil {
+		return
+	}
+	a.rt.mu.Lock()
+	p.service, p.version, p.port = req.Service, version, port
+	a.rt.mu.Unlock()
+	return
 }
 
 type plugin struct {
@@ -54,87 +116,16 @@ func (p *plugin) String() string {
 		p.service, p.id, cmd, log, p.version, p.port)
 }
 
-var errRegisterReq = errors.New(`router: register request ill-formed`)
-var errPluginVersion = errors.New(`router: plugin version empty`)
-var errTimeout = errors.New(`router: awaiting registration to complete has timed out`)
-
-type Admin struct {
-	rt       *Router
+type Router struct {
 	Listener net.Listener
 	Dialer   util.Dialer
-}
-
-func (a *Admin) serve() {
-	srv := rpc.NewServer()
-	srv.RegisterName("Router", a)
-	log.Println("router admin service listening on", a.Listener.Addr().String(), ". . .")
-	for {
-		conn, err := a.Listener.Accept()
-		if err != nil {
-			log.Println(err)
-			continue
-		}
-		go srv.ServeConn(conn)
-	}
-}
-
-func (a *Admin) listenAndServe() (err error) {
-	if a.Listener, err = net.Listen("tcp", "localhost:0"); err != nil {
-		return
-	}
-	go a.serve()
-	if err = a.rt.loadPlugins(); err != nil {
-		return
-	}
-	return
-}
-
-func (a *Admin) Register(req RegisterRequest, _ *struct{}) (err error) {
-	if !req.valid() {
-		return errRegisterReq
-	}
-	a.rt.mu.RLock()
-	p, ok := a.rt.pending[req.ID]
-	a.rt.mu.RUnlock()
-	if !ok {
-		err = fmt.Errorf("router: no plugin awaiting registration with ID=%s", req.ID)
-		return
-	}
-	defer func() {
-		if err == nil {
-			a.rt.valid <- p
-		} else {
-			a.rt.mu.Lock()
-			p.err = err
-			a.rt.mu.Unlock()
-			a.rt.invalid <- p
-		}
-	}()
-	var port = strconv.Itoa(int(req.Port))
-	var conn io.ReadWriteCloser
-	if conn, err = a.Dialer.Dial("tcp", "localhost:"+port); err != nil {
-		return
-	}
-	var version string
-	var cli = rpc.NewClient(conn)
-	defer cli.Close()
-	if err = cli.Call(req.Service+".Init", a.Listener.Addr().String(), &version); err != nil {
-		return
-	}
-	a.rt.mu.Lock()
-	p.service, p.version, p.port = req.Service, version, port
-	a.rt.mu.Unlock()
-	return
-}
-
-type Router struct {
-	admin   *Admin
-	mu      sync.RWMutex
-	plugins map[string]*plugin
-	pending map[uint16]*plugin
-	valid   chan *plugin
-	invalid chan *plugin
-	counter util.Counter
+	admin    *admin
+	mu       sync.RWMutex
+	plugins  map[string]*plugin
+	pending  map[uint16]*plugin
+	valid    chan *plugin
+	invalid  chan *plugin
+	counter  util.Counter
 }
 
 func (rt *Router) loadPlugins() (err error) {
@@ -260,7 +251,7 @@ func (rt *Router) routeConn(conn io.ReadWriteCloser) {
 		if err != nil {
 			break // TODO: send a response back
 		}
-		route, err := net.Dial("tcp", "localhost:"+port)
+		route, err := rt.Dialer.Dial("tcp", "localhost:"+port)
 		if err != nil {
 			break // TODO: send a response back
 		}
@@ -276,17 +267,12 @@ func (rt *Router) routeConn(conn io.ReadWriteCloser) {
 }
 
 func (rt *Router) ListenAndServe(addr string) (err error) {
-	if err = rt.admin.listenAndServe(); err != nil {
+	if rt.Listener, err = net.Listen("tcp", addr); err != nil {
 		return
 	}
-	var l net.Listener
-	if l, err = net.Listen("tcp", addr); err != nil {
-		return
-	}
-	go rt.daemon()
-	log.Println("router listening on", l.Addr().String(), ". . .")
+	log.Println("router listening on", rt.Listener.Addr().String(), ". . .")
 	for {
-		conn, err := l.Accept()
+		conn, err := rt.Listener.Accept()
 		if err != nil {
 			log.Print("error serving connection:", err)
 			continue
@@ -296,17 +282,23 @@ func (rt *Router) ListenAndServe(addr string) (err error) {
 	return
 }
 
-func NewRouter() (rt *Router) {
+func NewRouter() (rt *Router, err error) {
 	rt = &Router{
+		Dialer:  util.DefaultDialer,
 		plugins: make(map[string]*plugin),
 		pending: make(map[uint16]*plugin),
 		valid:   make(chan *plugin),
 		invalid: make(chan *plugin),
 	}
-	rt.admin = &Admin{
-		rt:       rt,
-		Listener: nil,
-		Dialer:   util.DefaultDialer,
+	rt.admin = &admin{
+		rt:     rt,
+		Dialer: util.DefaultDialer,
 	}
+	if rt.admin.Listener, err = net.Listen("tcp", "localhost:0"); err != nil {
+		return
+	}
+	go rt.daemon()
+	go rt.admin.serve()
+	err = rt.loadPlugins()
 	return
 }

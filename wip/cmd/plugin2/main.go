@@ -14,7 +14,7 @@ func (p Plugin2) Init(routerAddr string, _ *string) error {
 }
 
 func main() {
-	if err := plugin.ListenAndServe(new(Plugin2)); err != nil {
+	if err := plugin.ConnectAndServe(new(Plugin2)); err != nil {
 		log.Fatalf("plugin2: serving plugin failed with %q", err)
 	}
 }

@@ -93,7 +93,7 @@ func newConnector(r util.StatReader) (c *Connector, err error) {
 	return
 }
 
-func ListenAndServe(p Plugin) error {
+func ConnectAndServe(p Plugin) error {
 	c, err := newConnector(os.Stdin)
 	if err != nil {
 		return err

@@ -2,7 +2,7 @@ package main
 
 import (
 	"flag"
-	"log"
+	"fmt"
 	"os"
 
 	"github.com/rjeczalik/flyingexec/router"
@@ -15,10 +15,17 @@ func init() {
 	flag.Parse()
 }
 
+func fatal(err error) {
+	fmt.Println("router error:", err)
+	os.Exit(1)
+}
+
 func main() {
-	rt := router.NewRouter()
-	if err := rt.ListenAndServe(addr); err != nil {
-		log.Println("router error:", err)
-		os.Exit(1)
+	rt, err := router.NewRouter()
+	if err != nil {
+		fatal(err)
+	}
+	if err = rt.ListenAndServe(addr); err != nil {
+		fatal(err)
 	}
 }

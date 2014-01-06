@@ -14,7 +14,7 @@ func (p Plugin1) Init(_ string, version *string) (err error) {
 }
 
 func main() {
-	if err := plugin.ListenAndServe(new(Plugin1)); err != nil {
+	if err := plugin.ConnectAndServe(new(Plugin1)); err != nil {
 		log.Fatalf("plugin1: serving plugin failed with %q", err)
 	}
 }
