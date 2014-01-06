@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+
+flyingexec-test() {
+	declare -A cmds
+	cmds=(
+		[rt]=flyingexec/cmd/router
+		[plugins/plugin1]=flyingexec/wip/cmd/plugin1
+		[plugins/plugin2]=flyingexec/wip/cmd/plugin2
+	)
+	(
+	for bin in ${!cmds[@]}; do
+		echo go build -o ${bin} ${cmds[${bin}]}
+	done
+	) | parallel -j${#cmds[@]}
+}
+
+flyingexec-test
