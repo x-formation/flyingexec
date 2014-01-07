@@ -89,7 +89,7 @@ func newConnector(r util.StatReader) (c *Connector, err error) {
 	}
 	id, _ := strconv.Atoi(arr[1])
 	c.ID, c.RouterAddr = uint16(id), "localhost:"+arr[0]
-	c.Listener, err = net.Listen("tcp", "localhost:0")
+	c.Listener, err = util.DefaultListener.Listen("tcp", "localhost:0")
 	return
 }
 

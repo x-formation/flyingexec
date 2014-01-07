@@ -267,7 +267,7 @@ func (rt *Router) routeConn(conn io.ReadWriteCloser) {
 }
 
 func (rt *Router) ListenAndServe(addr string) (err error) {
-	if rt.Listener, err = net.Listen("tcp", addr); err != nil {
+	if rt.Listener, err = util.DefaultListener.Listen("tcp", addr); err != nil {
 		return
 	}
 	log.Println("router listening on", rt.Listener.Addr().String(), ". . .")
@@ -294,7 +294,7 @@ func NewRouter() (rt *Router, err error) {
 		rt:     rt,
 		Dialer: util.DefaultDialer,
 	}
-	if rt.admin.Listener, err = net.Listen("tcp", "localhost:0"); err != nil {
+	if rt.admin.Listener, err = util.DefaultListener.Listen("tcp", "localhost:0"); err != nil {
 		return
 	}
 	go rt.daemon()
