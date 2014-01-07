@@ -5,9 +5,11 @@ import (
 	"testing"
 
 	"github.com/rjeczalik/flyingexec/testutil"
+	"github.com/rjeczalik/flyingexec/util"
 )
 
 func init() {
+	util.DefaultNet = testutil.InMemNet
 	testutil.WatchInterrupt()
 }
 
