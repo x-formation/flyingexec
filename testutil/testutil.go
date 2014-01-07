@@ -1,15 +1,11 @@
 package testutil
 
 import (
-	"bytes"
 	"fmt"
 	"os"
 	"os/signal"
 	"runtime"
 	"testing"
-	"time"
-
-	"github.com/rjeczalik/flyingexec/util"
 )
 
 func stack(full bool) string {
@@ -37,40 +33,4 @@ func GuardPanic(t *testing.T) {
 	if r := recover(); r != nil {
 		t.Errorf("recovered from panic \"%v\"; stacktrace:\n\n%s", r, stack(false))
 	}
-}
-
-type Buffer struct {
-	*bytes.Buffer
-}
-
-func (b *Buffer) Name() (s string) {
-	return
-}
-
-func (b *Buffer) Size() int64 {
-	return int64(b.Len())
-}
-
-func (b *Buffer) Mode() (mode os.FileMode) {
-	return
-}
-
-func (b *Buffer) ModTime() (t time.Time) {
-	return
-}
-
-func (b *Buffer) IsDir() (dir bool) {
-	return
-}
-
-func (b *Buffer) Sys() (v interface{}) {
-	return
-}
-
-func (b *Buffer) Stat() (os.FileInfo, error) {
-	return b, nil
-}
-
-func NewStatReader(s string) util.StatReader {
-	return &Buffer{bytes.NewBufferString(s)}
 }

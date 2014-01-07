@@ -14,34 +14,33 @@ func init() {
 func TestRead(t *testing.T) {
 	defer testutil.GuardPanic(t)
 	table := []struct {
-		input string
-		err   error
-		id    uint16
-		port  int
+		adminPort string
+		ID        string
+		err       error
 	}{
-		{"8080 1", nil, 8080, 1},
-		{"33305 510 1234 135", nil, 33305, 510},
-		{"6600 0", nil, 6600, 0},
-		{"55695 43002 qwe qw", nil, 55695, 43002},
-		{input: "", err: errRead},
-		{input: "asd", err: errRead},
-		{input: "13123", err: errRead},
-		{input: "65560 123", err: errRead},
-		{input: "123 -1", err: errRead},
-		{input: "2342 qwe", err: errRead},
+		{"8080", "1", nil},
+		{"33305", "510", nil},
+		{"6600", "0", nil},
+		{"55695", "43002", nil},
+		{"", "", errRead},
+		{"asd", "", errRead},
+		{"13123", "", errRead},
+		{"65560", "123", errRead},
+		{"123", "-1", errRead},
+		{"2342", "qwe", errRead},
 	}
 	for _, row := range table {
-		c, err := newConnector(testutil.NewStatReader(row.input))
+		c, err := NewConnector(row.adminPort, row.ID)
 		if err != row.err {
 			t.Errorf("expected %v, got %v instead", row.err, err)
 			continue
 		}
 		if err == nil {
-			if c.ID != row.id {
-				t.Errorf("expected %v, got %v instead", row.id, c.RouterAddr)
+			if id := strconv.Itoa(int(c.ID)); id != row.ID {
+				t.Errorf("expected %q, got %q instead", row.ID, id)
 			}
-			if c.RouterAddr != "localhost:"+strconv.Itoa(row.port) {
-				t.Errorf("expected localhost:%d, got %v instead", row.port, c.RouterAddr)
+			if adminAddr := "localhost:" + row.adminPort; c.AdminAddr != adminAddr {
+				t.Errorf("expected localhost:%d, got %v instead", adminAddr, c.AdminAddr)
 			}
 			c.Listener.Close()
 		}

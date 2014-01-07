@@ -39,7 +39,7 @@ func (req *RegisterRequest) valid() bool {
 type admin struct {
 	rt       *Router
 	Listener net.Listener
-	Dialer   util.Dialer
+	Net      util.Net
 }
 
 func (a *admin) serve() {
@@ -78,7 +78,7 @@ func (a *admin) Register(req RegisterRequest, _ *struct{}) (err error) {
 		}
 	}()
 	var port = strconv.Itoa(int(req.Port))
-	conn, err := a.Dialer.Dial("tcp", "localhost:"+port)
+	conn, err := a.Net.Dial("tcp", "localhost:"+port)
 	if err != nil {
 		return
 	}
@@ -118,7 +118,7 @@ func (p *plugin) String() string {
 
 type Router struct {
 	Listener net.Listener
-	Dialer   util.Dialer
+	Net      util.Net
 	admin    *admin
 	mu       sync.RWMutex
 	plugins  map[string]*plugin
@@ -251,7 +251,7 @@ func (rt *Router) routeConn(conn io.ReadWriteCloser) {
 		if err != nil {
 			break // TODO: send a response back
 		}
-		route, err := rt.Dialer.Dial("tcp", "localhost:"+port)
+		route, err := rt.Net.Dial("tcp", "localhost:"+port)
 		if err != nil {
 			break // TODO: send a response back
 		}
@@ -267,7 +267,7 @@ func (rt *Router) routeConn(conn io.ReadWriteCloser) {
 }
 
 func (rt *Router) ListenAndServe(addr string) (err error) {
-	if rt.Listener, err = util.DefaultListener.Listen("tcp", addr); err != nil {
+	if rt.Listener, err = rt.Net.Listen("tcp", addr); err != nil {
 		return
 	}
 	log.Println("router listening on", rt.Listener.Addr().String(), ". . .")
@@ -284,17 +284,17 @@ func (rt *Router) ListenAndServe(addr string) (err error) {
 
 func NewRouter() (rt *Router, err error) {
 	rt = &Router{
-		Dialer:  util.DefaultDialer,
+		Net:     util.DefaultNet,
 		plugins: make(map[string]*plugin),
 		pending: make(map[uint16]*plugin),
 		valid:   make(chan *plugin),
 		invalid: make(chan *plugin),
 	}
 	rt.admin = &admin{
-		rt:     rt,
-		Dialer: util.DefaultDialer,
+		rt:  rt,
+		Net: util.DefaultNet,
 	}
-	if rt.admin.Listener, err = util.DefaultListener.Listen("tcp", "localhost:0"); err != nil {
+	if rt.admin.Listener, err = rt.admin.Net.Listen("tcp", "localhost:0"); err != nil {
 		return
 	}
 	go rt.daemon()
