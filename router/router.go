@@ -44,7 +44,7 @@ type admin struct {
 
 func (a *admin) serve() {
 	srv := rpc.NewServer()
-	srv.RegisterName("Router", a)
+	srv.RegisterName("Admin", a)
 	log.Println("router admin service listening on", a.Listener.Addr().String(), ". . .")
 	for {
 		conn, err := a.Listener.Accept()

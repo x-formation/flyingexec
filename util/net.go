@@ -1,6 +1,9 @@
 package util
 
-import "net"
+import (
+	"net"
+	"strconv"
+)
 
 type Net interface {
 	Dial(network, address string) (net.Conn, error)
@@ -15,6 +18,19 @@ func (stdNet) Dial(network, address string) (net.Conn, error) {
 
 func (stdNet) Listen(network, address string) (net.Listener, error) {
 	return net.Listen(network, address)
+}
+
+func SplitHostPort(hostport string) (host string, portNum uint16, err error) {
+	var port string
+	if host, port, err = net.SplitHostPort(hostport); err != nil {
+		return
+	}
+	var n int64
+	if n, err = strconv.ParseInt(port, 10, 16); err != nil {
+		return
+	}
+	portNum = uint16(n)
+	return
 }
 
 var DefaultNet Net = new(stdNet)

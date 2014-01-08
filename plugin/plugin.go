@@ -41,11 +41,7 @@ func (c *Connector) serve(p Plugin) {
 }
 
 func (c *Connector) register(p Plugin) error {
-	_, por, err := net.SplitHostPort(c.Listener.Addr().String())
-	if err != nil {
-		return err
-	}
-	port, err := strconv.Atoi(por)
+	_, port, err := util.SplitHostPort(c.Listener.Addr().String())
 	if err != nil {
 		return err
 	}
@@ -58,9 +54,9 @@ func (c *Connector) register(p Plugin) error {
 	req := router.RegisterRequest{
 		ID:      c.ID,
 		Service: reflect.TypeOf(p).Elem().Name(),
-		Port:    uint16(port),
+		Port:    port,
 	}
-	return cli.Call("Router.Register", req, nil)
+	return cli.Call("Admin.Register", req, nil)
 }
 
 func readUintFrom(r util.StatReader, count int) (arr []string, err error) {

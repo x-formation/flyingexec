@@ -3,7 +3,6 @@ package testutil
 import (
 	"errors"
 	"net"
-	"strconv"
 	"sync"
 
 	"github.com/rjeczalik/flyingexec/util"
@@ -18,9 +17,9 @@ type streamListener struct {
 	conn chan net.Conn
 }
 
-func newStreamListener(port int) *streamListener {
+func newStreamListener(port uint16) *streamListener {
 	return &streamListener{
-		addr: &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: port},
+		addr: &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: int(port)},
 		conn: make(chan net.Conn, 1),
 	}
 }
@@ -44,20 +43,18 @@ func (l *streamListener) Addr() net.Addr {
 
 type inMemNet struct {
 	mu        sync.RWMutex
-	listeners map[int]*streamListener
+	listeners map[uint16]*streamListener
 	counter   util.Counter
 }
 
-func (n *inMemNet) portNum(address string) (portNum int, err error) {
-	_, port, err := net.SplitHostPort(address)
-	if err != nil {
+func (n *inMemNet) portNum(address string) (port uint16, err error) {
+	if _, port, err = util.SplitHostPort(address); err != nil {
 		return
 	}
-	if port == "0" {
-		portNum = int(n.counter.Next())
+	if port == 0 {
+		port = uint16(n.counter.Next())
 		return
 	}
-	portNum, err = strconv.Atoi(port)
 	return
 }
 
@@ -96,6 +93,6 @@ func (n *inMemNet) Listen(_, address string) (net.Listener, error) {
 }
 
 var InMemNet util.Net = &inMemNet{
-	listeners: make(map[int]*streamListener),
+	listeners: make(map[uint16]*streamListener),
 	counter:   1,
 }
