@@ -1,2 +1,4 @@
-gpff
-====
+flyingexec
+==========
+
+Go plugin framework
