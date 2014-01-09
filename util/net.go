@@ -25,8 +25,8 @@ func SplitHostPort(hostport string) (host string, portNum uint16, err error) {
 	if host, port, err = net.SplitHostPort(hostport); err != nil {
 		return
 	}
-	var n int64
-	if n, err = strconv.ParseInt(port, 10, 16); err != nil {
+	var n uint64
+	if n, err = strconv.ParseUint(port, 10, 16); err != nil {
 		return
 	}
 	portNum = uint16(n)
