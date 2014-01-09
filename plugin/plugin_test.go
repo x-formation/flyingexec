@@ -36,15 +36,19 @@ func TestNew(t *testing.T) {
 	for _, row := range table {
 		c, err := NewConnector(row.adminPort, row.ID)
 		if err != row.err {
-			t.Errorf("expected %v, got %v instead", row.err, err)
+			t.Errorf("expected %v, got %v instead [NewConnector(%q, %q)]", row.err, err,
+				row.adminPort, row.ID)
 			continue
 		}
 		if err == nil {
 			if id := strconv.Itoa(int(c.ID)); id != row.ID {
-				t.Errorf("expected %q, got %q instead", row.ID, id)
+				t.Errorf("expected %q, got %q instead [NewConnector(%q, %q)]", row.ID, id,
+					row.adminPort, row.ID)
+
 			}
 			if adminAddr := "localhost:" + row.adminPort; c.AdminAddr != adminAddr {
-				t.Errorf("expected localhost:%d, got %v instead", adminAddr, c.AdminAddr)
+				t.Errorf("expected localhost:%d, got %v instead [NewConnector(%q, %q)]", adminAddr,
+					c.AdminAddr, row.adminPort, row.ID)
 			}
 			c.Listener.Close()
 		}
@@ -107,6 +111,7 @@ func newTestAdmin(t *testing.T) (cleanup func(), req *router.RegisterRequest, wa
 func newTestConnector(t *testing.T, req *router.RegisterRequest) *Connector {
 	c, err := NewConnector(strconv.Itoa(int(req.Port)), strconv.Itoa(int(req.ID)))
 	if err != nil {
+		t.Fatalf("expected error to be nil, got %v instead", err)
 	}
 	if _, req.Port, err = util.SplitHostPort(c.Listener.Addr().String()); err != nil {
 		t.Fatalf("expected err to be nil, got %v instead", err)
