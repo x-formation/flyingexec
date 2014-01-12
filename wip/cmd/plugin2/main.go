@@ -10,7 +10,7 @@ import (
 type Plugin2 struct{}
 
 func (p Plugin2) Init(routerAddr string, _ *string) error {
-	return fmt.Errorf("plugin: invalid router addr:", routerAddr)
+	return fmt.Errorf("plugin: invalid router addr: %s", routerAddr)
 }
 
 func main() {

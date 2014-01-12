@@ -47,7 +47,7 @@ func TestNew(t *testing.T) {
 
 			}
 			if adminAddr := "localhost:" + row.adminPort; c.AdminAddr != adminAddr {
-				t.Errorf("expected localhost:%d, got %v instead [NewConnector(%q, %q)]", adminAddr,
+				t.Errorf("expected %s, got %v instead [NewConnector(%q, %q)]", adminAddr,
 					c.AdminAddr, row.adminPort, row.ID)
 			}
 			c.Listener.Close()

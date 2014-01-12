@@ -2,16 +2,9 @@ package util
 
 import (
 	"testing"
-
-	"github.com/rjeczalik/flyingexec/testutil"
 )
 
-func init() {
-	testutil.WatchInterrupt()
-}
-
 func TestSplitHostPort(t *testing.T) {
-	defer testutil.GuardPanic(t)
 	table := []struct {
 		hostport string
 		host     string

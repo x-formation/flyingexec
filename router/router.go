@@ -64,7 +64,7 @@ func (a *admin) Register(req RegisterRequest, _ *struct{}) (err error) {
 	p, ok := a.rt.pending[req.ID]
 	a.rt.mu.RUnlock()
 	if !ok {
-		err = fmt.Errorf("router: no plugin awaiting registration with ID=%s", req.ID)
+		err = fmt.Errorf("router: no plugin awaiting registration with ID=%d", req.ID)
 		return
 	}
 	defer func() {
@@ -279,7 +279,6 @@ func (rt *Router) ListenAndServe(addr string) (err error) {
 		}
 		go rt.routeConn(conn)
 	}
-	return
 }
 
 func NewRouter() (rt *Router, err error) {
