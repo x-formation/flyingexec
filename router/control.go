@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/rpc"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 
@@ -45,8 +46,8 @@ func newControl(execdir string) (ctrl *control, err error) {
 		plugins:   newPluginContainer(),
 		event:     make(chan interface{}, 10),
 		counter:   1,
-		pluginDir: filepath.Join(dir, "plugins"),
-		logDir:    filepath.Join(dir, "logs"),
+		pluginDir: filepath.Join(execdir, "plugins"),
+		logDir:    filepath.Join(execdir, "logs"),
 	}
 	if err = os.MkdirAll(ctrl.pluginDir, 0775); err != nil {
 		return
@@ -55,6 +56,11 @@ func newControl(execdir string) (ctrl *control, err error) {
 		return
 	}
 	// TODO listener / loadPlugins
+	return
+}
+
+func (ctrl *control) pluginByService(name string) (*plugin, error) {
+	return ctrl.pluginByService(name)
 }
 
 func (ctrl *control) serve() {
@@ -71,16 +77,16 @@ func (ctrl *control) serve() {
 	}
 }
 
-func (ctrl *control) newPlugin(exec string) (p *plugin, err error) {
+func (ctrl *control) newPlugin(exe string) (p *plugin, err error) {
 	_, port, err := net.SplitHostPort(ctrl.listener.Addr().String())
 	if err != nil {
 		return
 	}
 	p = &plugin{
 		id:  uint16(ctrl.counter.Next()),
-		cmd: exec.Command(filepath.Join(ctrl.pluginDir, exec)),
+		cmd: exec.Command(filepath.Join(ctrl.pluginDir, exe)),
 	}
-	logFile := filepath.Join(logDir, exec+".log")
+	logFile := filepath.Join(ctrl.logDir, exe+".log")
 	if p.log, err = os.OpenFile(logFile, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0644); err != nil {
 		return
 	}
@@ -90,20 +96,21 @@ func (ctrl *control) newPlugin(exec string) (p *plugin, err error) {
 }
 
 func (ctrl *control) execPluginDir() (err error) {
-	execs, err := ioutil.ReadDir(pluginDir)
+	exes, err := ioutil.ReadDir(ctrl.pluginDir)
 	if err != nil {
 		return
 	}
-	for _, exec := range execs {
-		p, err := ctrl.newPlugin(exec)
+	for _, exe := range exes {
+		p, err := ctrl.newPlugin(exe.Name())
 		if err != nil {
-			return
+			return err
 		}
-		if err = ctrl.plugin.addPending(p); err != nil {
-			return
+		if err = ctrl.plugins.addPending(p); err != nil {
+			return err
 		}
 		// TODO exec + monitor a plugin
 	}
+	return
 }
 
 func (ctrl *control) Register(req RegisterRequest, _ *struct{}) (err error) {
@@ -115,11 +122,11 @@ func (ctrl *control) Register(req RegisterRequest, _ *struct{}) (err error) {
 	if err = req.valid(); err != nil {
 		return
 	}
-	p, err := ctrl.popPending(req.ID)
+	p, err := ctrl.plugins.popPending(req.ID)
 	if err != nil {
 		return
 	}
-	p.service, p.port = req.Service, "localhost:"+strconv.Itoa(int(req.Port))
+	p.service, p.addr = req.Service, "localhost:"+strconv.Itoa(int(req.Port))
 	if err = p.init(ctrl.listener.Addr().String()); err != nil {
 		return
 	}

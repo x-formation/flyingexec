@@ -9,7 +9,8 @@ import (
 	"net"
 	"net/rpc"
 	"strings"
-	"time"
+
+	"bitbucket.org/kardianos/osext"
 	"github.com/rjeczalik/flyingexec/util"
 )
 
@@ -19,7 +20,7 @@ type Router struct {
 	counter  util.Counter
 }
 
-// TODO move to control
+/* TODO move to control
 func (rt *Router) run(p *plugin) {
 	rt.mu.Lock()
 	rt.pending[p.id] = p
@@ -40,7 +41,7 @@ func (rt *Router) run(p *plugin) {
 		return
 	}
 	p.err = p.cmd.Wait()
-}
+}*/
 
 func (rt *Router) routeConn(conn io.ReadWriteCloser) {
 	defer conn.Close()
@@ -61,22 +62,17 @@ func (rt *Router) routeConn(conn io.ReadWriteCloser) {
 		if err = dec.Decode(nil); err != nil {
 			break
 		}
-		var port string
+		var p *plugin
 		dot := strings.LastIndex(req.ServiceMethod, ".")
-		if dot < 0 {
-			err = errors.New("rpc: service/method request ill-formed: " + req.ServiceMethod)
+		if dot > 0 {
+			p, err = rt.ctrl.pluginByService(req.ServiceMethod[:dot])
 		} else {
-			p, ok := rt.plugins[req.ServiceMethod[:dot]]
-			if !ok {
-				err = errors.New("rps: can't find service " + req.ServiceMethod)
-			} else {
-				port = p.port
-			}
+			err = errors.New("rpc: service/method request ill-formed: " + req.ServiceMethod)
 		}
 		if err != nil {
 			break // TODO: send a response back
 		}
-		route, err := rt.Net.Dial("tcp", "localhost:"+port)
+		route, err := util.DefaultNet.Dial("tcp", p.addr)
 		if err != nil {
 			break // TODO: send a response back
 		}
@@ -113,7 +109,7 @@ func NewRouter() (rt *Router, err error) {
 	if err != nil {
 		return
 	}
-	rt.ctrl, err := newControl(execdir)
+	rt.ctrl, err = newControl(execdir)
 	if err != nil {
 		return
 	}

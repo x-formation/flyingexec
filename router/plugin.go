@@ -6,6 +6,8 @@ import (
 	"os"
 	"os/exec"
 	"sync"
+
+	"github.com/rjeczalik/flyingexec/util"
 )
 
 type plugin struct {
@@ -26,10 +28,10 @@ func (p *plugin) String() string {
 		log = p.log.Name()
 	}
 	return fmt.Sprintf("service %q (id=%d, path=%s, log=%s, version=%s), "+
-		"listening on localhost:%s", p.service, p.id, cmd, log, p.version, p.port)
+		"listening on %s", p.service, p.id, cmd, log, p.version, p.addr)
 }
 
-func (p *plugin) init(routerAdd string) (err error) {
+func (p *plugin) init(routerAddr string) (err error) {
 	conn, err := util.DefaultNet.Dial("tcp", p.addr)
 	if err != nil {
 		return
@@ -53,23 +55,34 @@ func newPluginContainer() *pluginContainer {
 	}
 }
 
+func (pcnt *pluginContainer) pluginByService(name string) (p *plugin, err error) {
+	pcnt.mu.RLock()
+	p, ok := pcnt.reg[name]
+	pcnt.mu.RUnlock()
+	if !ok {
+		return nil, fmt.Errorf("rps: can't find service %q", name)
+	}
+	return
+}
+
 // TODO: add to watchlist, if a pending plugin did not get registered before
 // a timeout hits, we should fail and remove it from pending
 func (pcnt *pluginContainer) addPending(p *plugin) error {
-	ctrl.mu.RLock()
+	pcnt.mu.RLock()
 	_, ok := pcnt.pending[p.id]
-	ctrl.mu.RUnlock()
+	pcnt.mu.RUnlock()
 	if ok {
 		return fmt.Errorf("plugin container: plugin with ID=%d is already pending", p.id)
 	}
-	ctrl.mu.Lock()
-	ctrl.pending[p.id] = p
-	ctrl.mu.RLock()
+	pcnt.mu.Lock()
+	pcnt.pending[p.id] = p
+	pcnt.mu.RLock()
+	return nil
 }
 
 func (pcnt *pluginContainer) popPending(id uint16) (*plugin, error) {
 	pcnt.mu.RLock()
-	p, ok := ctrl.pending[id]
+	p, ok := pcnt.pending[id]
 	pcnt.mu.RUnlock()
 	if !ok {
 		return nil, fmt.Errorf("plugin container: no plugin with ID=%d is pending", id)
@@ -89,7 +102,7 @@ func (pcnt *pluginContainer) addReg(p *plugin) error {
 	}
 	pcnt.mu.Lock()
 	pcnt.reg[p.service] = p
-	rt.mu.Unlock()
+	pcnt.mu.Unlock()
 	return nil
 }
 
