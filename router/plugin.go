@@ -2,6 +2,7 @@ package router
 
 import (
 	"fmt"
+	"net"
 	"net/rpc"
 	"os"
 	"os/exec"
@@ -9,6 +10,15 @@ import (
 
 	"github.com/rjeczalik/flyingexec/util"
 )
+
+type ID uint16
+
+type PluginContainer struct {
+}
+
+func (pc *PluginContainer) Dial(service string) (conn net.Conn, err error) {
+	return
+}
 
 type plugin struct {
 	id      uint16

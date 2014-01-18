@@ -20,29 +20,6 @@ type Router struct {
 	counter  util.Counter
 }
 
-/* TODO move to control
-func (rt *Router) run(p *plugin) {
-	rt.mu.Lock()
-	rt.pending[p.id] = p
-	rt.mu.Unlock()
-	if err := p.cmd.Start(); err != nil {
-		p.err = err
-		rt.invalid <- p
-		return
-	}
-	select {
-	case p := <-rt.valid:
-		rt.add(p)
-	case <-time.After(30 * time.Second):
-		rt.mu.Lock()
-		p.err = errTimeout
-		rt.mu.Unlock()
-		rt.invalid <- p
-		return
-	}
-	p.err = p.cmd.Wait()
-}*/
-
 func (rt *Router) routeConn(conn io.ReadWriteCloser) {
 	defer conn.Close()
 	var buf bytes.Buffer

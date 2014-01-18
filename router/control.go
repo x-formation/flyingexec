@@ -32,6 +32,9 @@ func (req *RegisterRequest) valid() (err error) {
 	return
 }
 
+type Control interface {
+}
+
 type control struct {
 	plugins   *pluginContainer
 	event     chan interface{}
@@ -55,7 +58,10 @@ func newControl(execdir string) (ctrl *control, err error) {
 	if err = os.MkdirAll(ctrl.logDir, 0775); err != nil {
 		return
 	}
-	// TODO listener / loadPlugins
+	if ctrl.listener, err = util.DefaultNet.Listen("tcp", "localhost:0"); err != nil {
+		return
+	}
+	err = ctrl.execPluginDir()
 	return
 }
 
@@ -105,12 +111,22 @@ func (ctrl *control) execPluginDir() (err error) {
 		if err != nil {
 			return err
 		}
-		if err = ctrl.plugins.addPending(p); err != nil {
+		if err = p.cmd.Start(); err != nil {
 			return err
 		}
-		// TODO exec + monitor a plugin
+		if err = ctrl.plugins.addPending(p); err != nil {
+			p.cmd.Process.Kill()
+			return err
+		}
+		if err = ctrl.monitor(p); err != nil {
+			return err
+		}
 	}
 	return
+}
+
+func (ctrl *control) monitor(p *plugin) (err error) {
+	return // TODO
 }
 
 func (ctrl *control) Register(req RegisterRequest, _ *struct{}) (err error) {
