@@ -10,7 +10,6 @@ import (
 	"reflect"
 	"strconv"
 
-	"github.com/rjeczalik/flyingexec/router"
 	"github.com/rjeczalik/flyingexec/util"
 )
 
@@ -51,12 +50,12 @@ func (c *Connector) register(p Plugin) error {
 	}
 	cli := rpc.NewClient(conn)
 	defer cli.Close()
-	req := router.RegisterRequest{
-		ID:      c.ID,
-		Service: reflect.TypeOf(p).Elem().Name(),
-		Port:    port,
+	req := map[string]interface{}{
+		"ID":      c.ID,
+		"Port":    port,
+		"Service": reflect.TypeOf(p).Elem().Name(),
 	}
-	return cli.Call("Admin.Register", req, nil)
+	return cli.Call("__ControlService.Register", req, nil)
 }
 
 func readUintFrom(r util.StatReader, count int) (arr []string, err error) {

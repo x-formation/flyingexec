@@ -71,16 +71,6 @@ func (ctrl *control) pluginByService(name string) (*plugin, error) {
 
 func (ctrl *control) serve() {
 	srv := rpc.NewServer()
-	srv.RegisterName("Control", ctrl)
-	log.Println("router plugin control service listening on", ctrl.listener.Addr().String(), ". . .")
-	for {
-		conn, err := ctrl.listener.Accept()
-		if err != nil {
-			log.Println(err)
-			continue
-		}
-		go srv.ServeConn(conn)
-	}
 }
 
 func (ctrl *control) newPlugin(exe string) (p *plugin, err error) {
