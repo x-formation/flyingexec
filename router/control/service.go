@@ -15,24 +15,25 @@ var errReq = errors.New(`router: register request ill-formed`)
 var errVersion = errors.New(`control: plugin version empty`)
 
 type res struct {
-	name string
-	ver  string
-	err  error
-	port uint16
+	service string
+	ver     string
+	err     error
+	id      uint16
+	port    uint16
 }
 
 // TODO reflect (extractor helper?)
-func unpack(req map[string]interface{}) (id uint16, r res) {
+func unpack(req map[string]interface{}) (r res) {
 	v, ok := req["ID"]
 	if !ok {
 		r.err = errReq
 		return
 	}
-	if id, ok = v.(uint16); !ok || id == 0 {
+	if r.id, ok = v.(uint16); !ok || r.id == 0 {
 		r.err = errReq
 		return
 	}
-	v, ok := req["Port"]
+	v, ok = req["Port"]
 	if !ok {
 		r.err = errReq
 		return
@@ -41,53 +42,55 @@ func unpack(req map[string]interface{}) (id uint16, r res) {
 		r.err = errReq
 		return
 	}
-	v, ok := req["Service"]
+	v, ok = req["Service"]
 	if !ok {
 		r.err = errReq
 		return
 	}
-	if r.name, ok = v.(string); !ok || r.name == "" {
+	if r.service, ok = v.(string); !ok || r.service == "" {
 		r.err = errReq
 		return
 	}
 	return
 }
 
-// TODO logging
+// TODO logging (dep inj), ability to restart
 type Service struct {
 	pen map[uint16]chan<- res
 	lis net.Listener
 	mu  sync.RWMutex
 }
 
+// TODO not ready yet
 func newService() (srvc *Service, err error) {
 	srvc = &Service{
-		pen: make(map[uint16]func(error)),
+		pen: make(map[uint16]chan<- res),
 	}
 	srvc.lis, err = util.DefaultNet.Listen("tcp", "localhost:0")
-	go srvc.serve()
 	return
 }
 
 // TODO handle dups
-func (srvc *Service) addPen(id uint16, ch chan<- res) error {
+func (srvc *Service) addPen(id uint16, ch chan<- res) (err error) {
 	srvc.mu.Lock()
 	srvc.pen[id] = ch
 	srvc.mu.Unlock()
+	return
 }
 
-func (srvc *Service) remPen(id uitn16) {
+func (srvc *Service) remPen(id uint16) {
 	srvc.mu.Lock()
 	delete(srvc.pen, id)
 	srvc.mu.Unlock()
 }
 
+// TODO able to restart, stop
 func (srvc *Service) serve() {
 	srv := rpc.NewServer()
-	srv.RegisterName("__ControlService", ctrl)
+	srv.RegisterName("__ControlService", srvc)
 	log.Println("router control service listening on", srvc.lis.Addr().String(), ". . .")
 	for {
-		conn, err := ctrl.lis.Accept()
+		conn, err := srvc.lis.Accept()
 		if err != nil {
 			log.Println(err)
 			continue
@@ -96,9 +99,10 @@ func (srvc *Service) serve() {
 	}
 }
 
-// TODO logging
+// TODO rework Init to internal Init (service name, port) and external one
+// (plugin dependencies, actual plugin Init)
 func (srvc *Service) Register(req map[string]interface{}, _ *struct{}) error {
-	id, r := unpack(req)
+	r := unpack(req)
 	if r.err != nil {
 		return r.err
 	}
@@ -115,5 +119,5 @@ func (srvc *Service) Register(req map[string]interface{}, _ *struct{}) error {
 	}
 	cli := rpc.NewClient(conn)
 	defer cli.Close()
-	return cli.Call(r.name+".Init", srvc.lis.Addr().String(), &r.ver)
+	return cli.Call(r.service+".Init", srvc.lis.Addr().String(), &r.ver)
 }

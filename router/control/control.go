@@ -16,12 +16,12 @@ import (
 )
 
 type Runner interface {
-	Start(id uint16, service net.Addr, recovery func(error) error) error
+	Start(id uint16, service net.Addr, onstop func(bool, error)) error
 	Stop() error
 }
 
-type RunnerMaker interface {
-	Make(exe string) (Runner, error)
+type RunnerFactory interface {
+	New(exe string) (Runner, error)
 }
 
 // TODO: add Err() method, possibly to StartStopper interface + add regular
@@ -34,23 +34,23 @@ type CmdRunner struct {
 	id        uint16
 }
 
-type CmdRunnerMaker struct{}
+type CmdRunnerFactory struct{}
 
 // TODO go c.monitor() here
-func (CmdRunnerMaker) Make(exe string) (c *Cmd, err error) {
-	c = &Cmd{
+func (CmdRunnerFactory) New(exe string) (r Runner, err error) {
+	c := &CmdRunner{
 		cmd: exec.Command(exe),
 		err: make(chan error, 1),
 	}
 	if c.cmd.Stdout, err = os.OpenFile(exe+".log", os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0644); err != nil {
 		return
 	}
-	c.cmd.Stderr = c.cmd.Stdout
+	c.cmd.Stderr, r = c.cmd.Stdout, c
 	return
 }
 
-func (c *CmdRunner) Start(id uint16, service net.Addr, recovery func(error) error) error {
-	_, port, err := net.SplitHostPort(service.Addr().String())
+func (c *CmdRunner) Start(id uint16, service net.Addr, onstop func(bool, error)) error {
+	_, port, err := net.SplitHostPort(service.String())
 	if err != nil {
 		return err
 	}
@@ -58,15 +58,15 @@ func (c *CmdRunner) Start(id uint16, service net.Addr, recovery func(error) erro
 	if err = c.cmd.Start(); err != nil {
 		return err
 	}
-	go c.monitor(id, recovery)
-	return
+	go c.monitor(onstop)
+	return nil
 }
 
 // TODO call plugin and ask for gracefull shutdown, probably net.Addr should be
 // stored by c
 func (c *CmdRunner) Stop() error {
 	atomic.StoreUint32(&c.isclosing, 1)
-	err, perr := c.Process.Kill(), <-c.err
+	err, perr := c.cmd.Process.Kill(), <-c.err
 	atomic.StoreUint32(&c.isclosing, 0)
 	if perr != nil {
 		return perr
@@ -77,22 +77,19 @@ func (c *CmdRunner) Stop() error {
 // TODO refactor c.monitor() to be go-started at NewCmd
 // in a daemon mannger, then refactor c.monitor to not return
 // on succussfull recovery, but to jump to watching new process
-// instead; possibly recovery func will be kept by c, like the id is. (sync?)
-func (c *Runner) monitor(id uint16, recovery func(error) error) {
+// instead
+func (c *CmdRunner) monitor(onstop func(bool, error)) {
 	wait := make(chan error, 1)
 	for {
 		select {
 		case wait <- c.cmd.Wait():
 		case perr := <-wait:
+			restart := true
 			if atomic.LoadUint32(&c.isclosing) == 1 {
+				restart = false
 				c.err <- perr
-				return
 			}
-			err := recovery(perr)
-			if err != nil {
-				log.Printf("control: failed to recover plugin #%d: %q", id, err)
-				// TODO save err to member descibed at line 23
-			}
+			onstop(restart, perr)
 			return
 		}
 	}
@@ -101,14 +98,18 @@ func (c *Runner) monitor(id uint16, recovery func(error) error) {
 var errTimeout = errors.New(`control: awaiting registration to complete has timed out`)
 
 type plugin struct {
-	ver  string
-	addr string
-	run  Runner
+	service string
+	ver     string
+	addr    string
+	exe     string
 }
 
 type Control struct {
-	maker   RunnerMaker
-	plugins map[string]*plugin
+	runner  RunnerFactory
+	plugins struct {
+		id      map[uint16]*plugin
+		service map[string]*plugin
+	}
 	srvc    *Service
 	mu      sync.RWMutex
 	counter util.Counter
@@ -116,29 +117,55 @@ type Control struct {
 
 func NewControl() (ctrl *Control, err error) {
 	ctrl = &Control{
-		maker:   CmdRunnerMaker{},
-		plugins: make(map[string]*plugin),
+		runner:  CmdRunnerFactory{},
 		counter: 1,
 	}
+	ctrl.plugins.id, ctrl.plugins.service = make(map[uint16]*plugin), make(map[string]*plugin)
 	if ctrl.srvc, err = newService(); err != nil {
 		return
 	}
-	return // TODO
+	go ctrl.srvc.serve()
+	return
+}
+
+// TODO mock logging, too verbose
+func (ctrl *Control) restartOrRemove(id uint16, restart bool, err error) {
+	if err != nil && restart {
+		log.Printf("control: plugin #%d stopped unexpectedly and is going to "+
+			"be restarted: %v", id, err)
+	} else if err != nil {
+		log.Printf("control: plugin #%d stopped with error: %v", id, err)
+	} else {
+		log.Printf("control: plugin #%d stopped", id)
+	}
+	// TODO handle missing?
+	ctrl.mu.Lock()
+	p := ctrl.plugins.id[id]
+	delete(ctrl.plugins.service, p.service)
+	delete(ctrl.plugins.id, id)
+	ctrl.mu.Unlock()
+	if restart {
+		if err = ctrl.Run(p.exe); err != nil {
+			log.Printf("control: failed to restart the plugin #%d: %v", id, err)
+		}
+	}
 }
 
 func (ctrl *Control) Run(exe string) error {
-	run, err := ctrl.maker.Make(exe)
+	run, err := ctrl.runner.New(exe)
 	if err != nil {
 		return err
 	}
-	addr, id, ch := ctrl.srvc.Addr(), uint16(ctrl.counter.Next()), make(chan res)
-	pc.srvc.addPen(id, ch)
+	addr, id, ch := ctrl.srvc.lis.Addr(), uint16(ctrl.counter.Next()), make(chan res)
+	ctrl.srvc.addPen(id, ch)
 	defer func() {
-		pc.srvc.remPen(id)
+		ctrl.srvc.remPen(id)
 		close(ch)
 	}()
-	// TODO recovery
-	if err = run.Start(id, ctrl.srvc.lis.Addr(), nil); err != nil {
+	onstop := func(restart bool, err error) {
+		ctrl.restartOrRemove(id, restart, err)
+	}
+	if err = run.Start(id, addr, onstop); err != nil {
 		return err
 	}
 	var r res
@@ -151,20 +178,26 @@ func (ctrl *Control) Run(exe string) error {
 		return errTimeout
 	}
 	p := &plugin{
-		ver:  r.version,
-		addr: "localhost:" + strconv.Itoa(int(r.port)),
-		run:  run,
+		service: r.service,
+		ver:     r.ver,
+		addr:    "localhost:" + strconv.Itoa(int(r.port)),
+		exe:     exe,
 	}
-	// TODO handle dups
+	// TODO handle dups on service name
 	ctrl.mu.Lock()
-	ctrl.plugins[r.name] = p
-	ctrl.mu.Unock()
-	return
+	ctrl.plugins.id[r.id] = p
+	ctrl.plugins.service[r.service] = p
+	ctrl.mu.Unlock()
+	return nil
 }
 
 func (ctrl *Control) Dial(service string) (conn net.Conn, err error) {
 	ctrl.mu.RLock()
-	// TODO
+	p, ok := ctrl.plugins.service[service]
 	ctrl.mu.RUnlock()
+	if !ok {
+		return nil, errors.New("rpc: can't find service " + service)
+	}
+	conn, err = util.DefaultNet.Dial("tcp", p.addr)
 	return
 }
