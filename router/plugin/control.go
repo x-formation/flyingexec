@@ -105,7 +105,7 @@ type plugin struct {
 }
 
 type Control struct {
-	runner  RunnerFactory
+	Runner  RunnerFactory
 	plugins struct {
 		id      map[uint16]*plugin
 		service map[string]*plugin
@@ -117,7 +117,7 @@ type Control struct {
 
 func NewControl() (ctrl *Control, err error) {
 	ctrl = &Control{
-		runner:  CmdRunnerFactory{},
+		Runner:  CmdRunnerFactory{},
 		counter: 1,
 	}
 	ctrl.plugins.id, ctrl.plugins.service = make(map[uint16]*plugin), make(map[string]*plugin)
@@ -138,7 +138,7 @@ func (ctrl *Control) restartOrRemove(id uint16, restart bool, err error) {
 	} else {
 		log.Printf("control: plugin #%d stopped", id)
 	}
-	// TODO handle missing?
+	// TODO handle missing id?
 	ctrl.mu.Lock()
 	p := ctrl.plugins.id[id]
 	delete(ctrl.plugins.service, p.service)
@@ -152,22 +152,25 @@ func (ctrl *Control) restartOrRemove(id uint16, restart bool, err error) {
 }
 
 func (ctrl *Control) Run(exe string) error {
-	run, err := ctrl.runner.New(exe)
+	run, err := ctrl.Runner.New(exe)
 	if err != nil {
 		return err
 	}
 	addr, id, ch := ctrl.srvc.lis.Addr(), uint16(ctrl.counter.Next()), make(chan res)
 	ctrl.srvc.addPen(id, ch)
+	// TODO document this magic / refactor to separate context?
 	defer func() {
 		ctrl.srvc.remPen(id)
 		close(ch)
 	}()
+	// TODO onstop would benefit from more state
 	onstop := func(restart bool, err error) {
 		ctrl.restartOrRemove(id, restart, err)
 	}
 	if err = run.Start(id, addr, onstop); err != nil {
 		return err
 	}
+	// TODO dispatch event to (*Control).EventLoop?
 	var r res
 	select {
 	case r = <-ch:

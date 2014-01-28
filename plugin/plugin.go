@@ -70,7 +70,7 @@ func readUintFrom(r util.StatReader, count int) (arr []string, err error) {
 		if _, err = strconv.ParseUint(arr[len(arr)-1], 10, 16); err != nil {
 			return
 		}
-		count -= 1
+		count -= 2
 	}
 	if scan.Err() != nil || count != 0 {
 		err = errRead
@@ -103,6 +103,7 @@ func ConnectAndServe(p Plugin) error {
 	return Serve(c, p)
 }
 
+// TODO refactor Serve into (*Connector).Serve and (*Connector).Stop
 func Serve(c *Connector, p Plugin) (err error) {
 	go c.serve(p)
 	defer c.Listener.Close()

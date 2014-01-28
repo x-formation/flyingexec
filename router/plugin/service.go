@@ -23,7 +23,8 @@ type res struct {
 }
 
 // TODO reflect (extractor helper?)
-func unpack(req map[string]interface{}) (r res) {
+func newRes(req map[string]interface{}) (r res, err error) {
+	defer func() { err = r.err }()
 	v, ok := req["ID"]
 	if !ok {
 		r.err = errReq
@@ -101,10 +102,10 @@ func (srvc *Service) serve() {
 
 // TODO rework Init to internal Init (service name, port) and external one
 // (plugin dependencies, actual plugin Init)
-func (srvc *Service) Register(req map[string]interface{}, _ *struct{}) error {
-	r := unpack(req)
-	if r.err != nil {
-		return r.err
+func (srvc *Service) Register(req map[string]interface{}, _ *struct{}) (err error) {
+	r, err := newRes(req)
+	if err != nil {
+		return
 	}
 	srvc.mu.RLock()
 	ch, ok := srvc.pen[r.id]
@@ -112,12 +113,16 @@ func (srvc *Service) Register(req map[string]interface{}, _ *struct{}) error {
 	if !ok {
 		return errReq
 	}
-	defer func() { ch <- r }()
+	defer func() {
+		r.err = err
+		ch <- r
+	}()
 	conn, err := util.DefaultNet.Dial("tcp", "localhost:"+strconv.Itoa(int(r.port)))
 	if err != nil {
-		return err
+		return
 	}
 	cli := rpc.NewClient(conn)
 	defer cli.Close()
-	return cli.Call(r.service+".Init", srvc.lis.Addr().String(), &r.ver)
+	err = cli.Call(r.service+".Init", srvc.lis.Addr().String(), &r.ver)
+	return
 }
