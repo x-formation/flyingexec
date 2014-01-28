@@ -16,7 +16,7 @@ import (
 )
 
 type Runner interface {
-	Start(id uint16, service net.Addr, onstop func(bool, error)) error
+	Start(id uint32, service net.Addr, onstop func(bool, error)) error
 	Stop() error
 }
 
@@ -31,7 +31,7 @@ type CmdRunner struct {
 	err       chan error
 	cmd       *exec.Cmd
 	isclosing uint32
-	id        uint16
+	id        uint32
 }
 
 type CmdRunnerFactory struct{}
@@ -49,7 +49,7 @@ func (CmdRunnerFactory) New(exe string) (r Runner, err error) {
 	return
 }
 
-func (c *CmdRunner) Start(id uint16, service net.Addr, onstop func(bool, error)) error {
+func (c *CmdRunner) Start(id uint32, service net.Addr, onstop func(bool, error)) error {
 	_, port, err := net.SplitHostPort(service.String())
 	if err != nil {
 		return err
@@ -75,7 +75,7 @@ func (c *CmdRunner) Stop() error {
 }
 
 // TODO refactor c.monitor() to be go-started at NewCmd
-// in a daemon mannger, then refactor c.monitor to not return
+// in a daemon manner, then refactor c.monitor to not return
 // on succussfull recovery, but to jump to watching new process
 // instead
 func (c *CmdRunner) monitor(onstop func(bool, error)) {
@@ -98,16 +98,16 @@ func (c *CmdRunner) monitor(onstop func(bool, error)) {
 var errTimeout = errors.New(`control: awaiting registration to complete has timed out`)
 
 type plugin struct {
-	service string
-	ver     string
-	addr    string
-	exe     string
+	serv string
+	ver  string
+	addr string
+	exe  string
 }
 
 type Control struct {
 	Runner  RunnerFactory
 	plugins struct {
-		id      map[uint16]*plugin
+		id      map[uint32]*plugin
 		service map[string]*plugin
 	}
 	srvc    *Service
@@ -120,7 +120,7 @@ func NewControl() (ctrl *Control, err error) {
 		Runner:  CmdRunnerFactory{},
 		counter: 1,
 	}
-	ctrl.plugins.id, ctrl.plugins.service = make(map[uint16]*plugin), make(map[string]*plugin)
+	ctrl.plugins.id, ctrl.plugins.service = make(map[uint32]*plugin), make(map[string]*plugin)
 	if ctrl.srvc, err = newService(); err != nil {
 		return
 	}
@@ -129,7 +129,7 @@ func NewControl() (ctrl *Control, err error) {
 }
 
 // TODO mock logging, too verbose
-func (ctrl *Control) restartOrRemove(id uint16, restart bool, err error) {
+func (ctrl *Control) restartOrRemove(id uint32, restart bool, err error) {
 	if err != nil && restart {
 		log.Printf("control: plugin #%d stopped unexpectedly and is going to "+
 			"be restarted: %v", id, err)
@@ -141,7 +141,7 @@ func (ctrl *Control) restartOrRemove(id uint16, restart bool, err error) {
 	// TODO handle missing id?
 	ctrl.mu.Lock()
 	p := ctrl.plugins.id[id]
-	delete(ctrl.plugins.service, p.service)
+	delete(ctrl.plugins.service, p.serv)
 	delete(ctrl.plugins.id, id)
 	ctrl.mu.Unlock()
 	if restart {
@@ -156,7 +156,7 @@ func (ctrl *Control) Run(exe string) error {
 	if err != nil {
 		return err
 	}
-	addr, id, ch := ctrl.srvc.lis.Addr(), uint16(ctrl.counter.Next()), make(chan res)
+	addr, id, ch := ctrl.srvc.lis.Addr(), ctrl.counter.Next(), make(chan res)
 	ctrl.srvc.addPen(id, ch)
 	// TODO document this magic / refactor to separate context?
 	defer func() {
@@ -181,15 +181,15 @@ func (ctrl *Control) Run(exe string) error {
 		return errTimeout
 	}
 	p := &plugin{
-		service: r.service,
-		ver:     r.ver,
-		addr:    "localhost:" + strconv.Itoa(int(r.port)),
-		exe:     exe,
+		serv: r.serv,
+		ver:  r.ver,
+		addr: r.addr,
+		exe:  exe,
 	}
 	// TODO handle dups on service name
 	ctrl.mu.Lock()
 	ctrl.plugins.id[r.id] = p
-	ctrl.plugins.service[r.service] = p
+	ctrl.plugins.service[r.serv] = p
 	ctrl.mu.Unlock()
 	return nil
 }

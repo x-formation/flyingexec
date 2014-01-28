@@ -34,12 +34,12 @@ type PluginRunner struct {
 	cli  client.Plugin
 }
 
-func (p *PluginRunner) Start(id uint16, service net.Addr, onstop func(bool, error)) (err error) {
+func (p *PluginRunner) Start(id uint32, service net.Addr, onstop func(bool, error)) (err error) {
 	_, port, err := net.SplitHostPort(service.String())
 	if err != nil {
 		return
 	}
-	p.conn, err = client.NewConnector(port, strconv.Itoa(int(id)))
+	p.conn, err = client.NewConnector(strconv.Itoa(int(id)), "localhost:"+port)
 	if err != nil {
 		return
 	}
