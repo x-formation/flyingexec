@@ -1,136 +1,113 @@
 package plugin
 
 import (
+	"net"
 	"net/rpc"
-	"strconv"
+	"reflect"
 	"testing"
+	"time"
 
-	"github.com/rjeczalik/flyingexec/router"
 	"github.com/rjeczalik/flyingexec/testutil"
 	"github.com/rjeczalik/flyingexec/util"
 )
 
-func init() {
-	util.DefaultNet = testutil.InMemNet
-	testutil.WatchInterrupt()
-}
-
-func TestNew(t *testing.T) {
-	defer testutil.GuardPanic(t)
-	table := []struct {
-		adminPort string
-		ID        string
-		err       error
-	}{
-		{"8080", "1", nil},
-		{"33305", "510", nil},
-		{"6600", "0", nil},
-		{"55695", "43002", nil},
-		{"", "", errRead},
-		{"asd", "", errRead},
-		{"13123", "", errRead},
-		{"65560", "123", errRead},
-		{"123", "-1", errRead},
-		{"2342", "qwe", errRead},
-	}
-	for _, row := range table {
-		c, err := NewConnector(row.adminPort, row.ID)
-		if err != row.err {
-			t.Errorf("expected %v, got %v instead [NewConnector(%q, %q)]", row.err, err,
-				row.adminPort, row.ID)
-			continue
-		}
-		if err == nil {
-			if id := strconv.Itoa(int(c.ID)); id != row.ID {
-				t.Errorf("expected %q, got %q instead [NewConnector(%q, %q)]", row.ID, id,
-					row.adminPort, row.ID)
-
-			}
-			if adminAddr := "localhost:" + row.adminPort; c.AdminAddr != adminAddr {
-				t.Errorf("expected %s, got %v instead [NewConnector(%q, %q)]", adminAddr,
-					c.AdminAddr, row.adminPort, row.ID)
-			}
-			c.Listener.Close()
-		}
-	}
-}
-
-type Admin struct {
+type controlServiceSpy struct {
 	t    *testing.T
-	req  *router.RegisterRequest
+	l    net.Listener
+	req  map[string]string
+	ver  *string
 	done chan<- bool
 }
 
-func (a Admin) Register(req router.RegisterRequest, _ *struct{}) (err error) {
-	if a.req.ID != req.ID {
-		a.t.Errorf("expected ID to be %v, was %v instead", a.req.ID, req.ID)
+func (srvc *controlServiceSpy) Register(req map[string]string, _ *struct{}) (err error) {
+	defer func() { srvc.done <- (err == nil) }()
+	if !reflect.DeepEqual(srvc.req, req) {
+		srvc.t.Errorf("expected req to be %+v, got %+v instead", srvc.req, req)
+		return
 	}
-	if a.req.Service != req.Service {
-		a.t.Errorf("expected service name to be %v, was %v instead", a.req.Service, req.Service)
+	var ver string
+	conn, err := util.DefaultNet.Dial("tcp", ":"+req["Port"])
+	if err != nil {
+		srvc.t.Errorf("expected err to be nil, got %q instead", err)
 	}
-	if a.req.Port != req.Port {
-		a.t.Errorf("expected port to be %v, was %v instead", a.req.Port, req.Port)
+	cli := rpc.NewClient(conn)
+	defer cli.Close()
+	if err = cli.Call(req["Service"]+".Init", srvc.l.Addr().String(), &ver); err != nil {
+		srvc.t.Errorf("expected err to be nil, got %q instead", err)
 	}
-	a.done <- true
+	if ver != *srvc.ver {
+		srvc.t.Errorf("expected ver to be %q, got %q instead", *srvc.ver, ver)
+	}
 	return
 }
 
-func newTestAdmin(t *testing.T) (cleanup func(), req *router.RegisterRequest, wait <-chan bool) {
+func setupControlService(t *testing.T) (cleanup func(), req map[string]string, ver *string, wait <-chan bool) {
 	var err error
-	done := make(chan bool)
+	done := make(chan bool, 1)
 	defer func() {
 		if err != nil {
 			t.Fatalf("expected err to be nil, got %v instead", err)
 		}
 	}()
-	req = new(router.RegisterRequest)
-	a := &Admin{t: t, req: req, done: done}
-	l, err := util.DefaultNet.Listen("tcp", ":0")
+	req, ver = make(map[string]string), new(string)
+	srvc := &controlServiceSpy{t: t, req: req, ver: ver, done: done}
+	srvc.l, err = util.DefaultNet.Listen("tcp", ":0")
 	if err != nil {
 		return
 	}
-	if _, req.Port, err = util.SplitHostPort(l.Addr().String()); err != nil {
+	if _, req["Port"], err = net.SplitHostPort(srvc.l.Addr().String()); err != nil {
 		return
 	}
 	srv := rpc.NewServer()
-	srv.Register(a)
+	srv.RegisterName("__ControlService", srvc)
 	go func() {
 		for {
-			conn, err := l.Accept()
+			conn, err := srvc.l.Accept()
 			if err != nil {
 				break
 			}
 			go srv.ServeConn(conn)
 		}
 	}()
-	cleanup = func() { l.Close() }
+	cleanup = func() { srvc.l.Close() }
 	wait = done
 	return
 }
 
-func newTestConnector(t *testing.T, req *router.RegisterRequest) *Connector {
-	c, err := NewConnector(strconv.Itoa(int(req.Port)), strconv.Itoa(int(req.ID)))
+func newTestConnector(t *testing.T, req map[string]string) *Connector {
+	c, err := NewConnector(req["ID"], "localhost:"+req["Port"])
 	if err != nil {
 		t.Fatalf("expected error to be nil, got %v instead", err)
 	}
-	if _, req.Port, err = util.SplitHostPort(c.Listener.Addr().String()); err != nil {
+	if _, req["Port"], err = net.SplitHostPort(c.Listener.Addr().String()); err != nil {
 		t.Fatalf("expected err to be nil, got %v instead", err)
 	}
 	return c
 }
 
-type PluginTest struct{}
+type PluginTest struct {
+	ver string
+}
 
-func (PluginTest) Init(_ string, _ *string) (err error) {
+func (p *PluginTest) Init(_ string, ver *string) (err error) {
+	*ver = p.ver
 	return
 }
 
+// TODO any simpler? at least refactor mocks to testutil package
 func TestRegisterRequest(t *testing.T) {
 	defer testutil.GuardPanic(t)
-	cleanup, req, wait := newTestAdmin(t)
+	cleanup, req, ver, wait := setupControlService(t)
 	defer cleanup()
-	req.ID, req.Service = 123, "PluginTest"
+	req["ID"], req["Service"], *ver = "123", "PluginTest", "1.0.0"
 	c := newTestConnector(t, req)
-	go Serve(c, new(PluginTest))
-	<-wait
+	go testutil.Must(t, func() error { return Serve(c, &PluginTest{ver: *ver}) })
+	select {
+	case ok := <-wait:
+		if !ok {
+			t.Errorf("expected ok to be true")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatalf("timed out after 5 seconds")
+	}
 }
