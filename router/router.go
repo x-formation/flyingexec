@@ -10,14 +10,17 @@ import (
 	"net/rpc"
 	"strings"
 
-	"bitbucket.org/kardianos/osext"
+	"github.com/rjeczalik/flyingexec/loader"
+	"github.com/rjeczalik/flyingexec/router/plugin"
 	"github.com/rjeczalik/flyingexec/util"
+
+	"bitbucket.org/kardianos/osext"
 )
 
 type Router struct {
 	Listener net.Listener
-	ctrl     *control
-	counter  util.Counter
+	Control  *plugin.Control
+	Loader   *loader.Loader
 }
 
 func (rt *Router) routeConn(conn io.ReadWriteCloser) {
@@ -39,30 +42,27 @@ func (rt *Router) routeConn(conn io.ReadWriteCloser) {
 		if err = dec.Decode(nil); err != nil {
 			break
 		}
-		var p *plugin
 		dot := strings.LastIndex(req.ServiceMethod, ".")
-		if dot > 0 {
-			p, err = rt.ctrl.pluginByService(req.ServiceMethod[:dot])
-		} else {
+		if dot == 0 {
 			err = errors.New("rpc: service/method request ill-formed: " + req.ServiceMethod)
+			break // TODO send a response back
 		}
+		pluginConn, err := rt.Control.Dial(req.ServiceMethod[:dot])
 		if err != nil {
-			break // TODO: send a response back
+			break // TODO send a response back
 		}
-		route, err := util.DefaultNet.Dial("tcp", p.addr)
-		if err != nil {
-			break // TODO: send a response back
-		}
-		defer route.Close()
-		if _, err = route.Write(buf.Bytes()); err != nil {
+		defer pluginConn.Close()
+		// TODO handle short write
+		if _, err = pluginConn.Write(buf.Bytes()); err != nil {
 			break
 		}
-		if _, err = io.Copy(conn, route); err != nil {
+		if _, err = io.Copy(conn, pluginConn); err != nil {
 			break
 		}
 	}
 }
 
+// TODO abstract for-Accept loop
 func (rt *Router) ListenAndServe(addr string) (err error) {
 	if rt.Listener, err = util.DefaultNet.Listen("tcp", addr); err != nil {
 		return
@@ -79,16 +79,14 @@ func (rt *Router) ListenAndServe(addr string) (err error) {
 }
 
 func NewRouter() (rt *Router, err error) {
-	rt = &Router{
-		counter: 1,
-	}
 	execdir, err := osext.ExecutableFolder()
 	if err != nil {
 		return
 	}
-	rt.ctrl, err = newControl(execdir)
-	if err != nil {
+	rt = new(Router)
+	if rt.Control, err = plugin.NewControl(); err != nil {
 		return
 	}
+	rt.Loader, err = loader.NewLoader(execdir)
 	return
 }

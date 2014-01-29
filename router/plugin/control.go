@@ -97,6 +97,7 @@ func (c *CmdRunner) monitor(onstop func(bool, error)) {
 
 var errTimeout = errors.New(`control: awaiting registration to complete has timed out`)
 
+// TODO refactor: plugin and res overlaps
 type plugin struct {
 	serv string
 	ver  string
@@ -105,10 +106,12 @@ type plugin struct {
 }
 
 type Control struct {
-	Runner  RunnerFactory
+	Runner RunnerFactory
+	// TODO multi-index map
 	plugins struct {
-		id      map[uint32]*plugin
-		service map[string]*plugin
+		id      map[uint32]*plugin // id-lookup used by Service
+		service map[string]*plugin // service-name-lookup used by Router
+		exe     map[string]*plugin // file-path-lookup used bu Loader
 	}
 	srvc    *Service
 	mu      sync.RWMutex
@@ -120,7 +123,9 @@ func NewControl() (ctrl *Control, err error) {
 		Runner:  CmdRunnerFactory{},
 		counter: 1,
 	}
-	ctrl.plugins.id, ctrl.plugins.service = make(map[uint32]*plugin), make(map[string]*plugin)
+	ctrl.plugins.id = make(map[uint32]*plugin)
+	ctrl.plugins.service = make(map[string]*plugin)
+	ctrl.plugins.exe = make(map[string]*plugin)
 	if ctrl.srvc, err = newService(); err != nil {
 		return
 	}

@@ -22,7 +22,6 @@ type res struct {
 	id   uint32
 }
 
-// TODO reflect (extractor helper?)
 func newRes(req map[string]string) (r res, err error) {
 	for _, k := range []string{"ID", "Port", "Service"} {
 		v, ok := req[k]
@@ -74,7 +73,8 @@ func (srvc *Service) remPen(id uint32) {
 	srvc.mu.Unlock()
 }
 
-// TODO able to restart, stop
+// TODO ablility to restart, stop
+// TODO abstract for-Accept loop
 func (srvc *Service) serve() {
 	srv := rpc.NewServer()
 	srv.RegisterName("__ControlService", srvc)
