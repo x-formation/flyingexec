@@ -32,7 +32,7 @@ func run(cmd []string) (err error) {
 		return
 	}
 	// TODO(rjeczalik): Rotate log each x MiB?
-	path := filepath.Join(dir, "flying."+cmd[0]+".log")
+	path := filepath.Join(dir, "flying.log")
 	log, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0664)
 	if err != nil {
 		return
