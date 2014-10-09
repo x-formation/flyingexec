@@ -15,6 +15,10 @@ import (
 	"github.com/rjeczalik/rw"
 )
 
+var errAlreadyStarted = errors.New("flying: command already started")
+var errEmptyCommnd = errors.New("flying: empty command")
+var errNotRunning = errors.New("flying: command is not running")
+
 // Client TODO
 type Client struct {
 	// Log TODO
@@ -27,34 +31,46 @@ type Client struct {
 // Start TODO
 func (c *Client) Start(cmd []string) error {
 	if c.cmd != nil {
-		return errors.New("flying: command already started")
+		return errAlreadyStarted
 	}
 	if len(cmd) == 0 {
-		return errors.New("flying: empty command")
+		return errEmptyCommnd
 	}
+	cmdname := filepath.Base(cmd[0])
 	cwd := "<nil>"
 	if wd, err := os.Getwd(); err == nil {
 		cwd = wd
 	}
-	c.logf("flying: started with command=%s, args=[%v], CWD=%s\n", cmd[0],
+	c.logf("flying: started with command=%s, args=[%v], CWD=%s\n", cmdname,
 		strings.Join(cmd[1:], ", "), cwd)
 	path, err := exec.LookPath(cmd[0])
 	if err != nil {
 		return c.exit(err)
 	}
+	c.logf("flying: %s is %s\n", cmdname, path)
 	c.cmd = exec.Command(path, cmd[1:]...)
-	c.cmd.Stdout = rw.PrefixWriter(c.log(), prefix(path))
-	c.cmd.Stderr = rw.PrefixWriter(c.log(), prefix(path+"] [error"))
+	c.cmd.Stdout = rw.PrefixWriter(c.log(), prefix(cmdname))
+	c.cmd.Stderr = rw.PrefixWriter(c.log(), prefix(cmdname+"] [error"))
 	if err = c.cmd.Start(); err != nil {
 		return c.exit(err)
 	}
 	return nil
 }
 
+// Interrupt TODO
+func (c *Client) Interrupt() error {
+	if c.cmd == nil {
+		return errNotRunning
+	}
+	// Interrupt is a wrapper for (*os.Process).Signal(os.Interrupt) - remove it
+	// after golang.org/issue/6720.
+	return interrupt(c.cmd.Process)
+}
+
 // Wait TODO
 func (c *Client) Wait() error {
 	if c.cmd == nil {
-		return errors.New("flying: command is not running")
+		return errNotRunning
 	}
 	return c.exit(c.cmd.Wait())
 }

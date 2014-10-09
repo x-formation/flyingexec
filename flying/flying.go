@@ -2,6 +2,15 @@ package flying
 
 import "io"
 
+func nonil(err ...error) error {
+	for _, err := range err {
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 type nopc struct {
 	io.Writer
 }
