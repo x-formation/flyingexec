@@ -14,10 +14,23 @@ import (
 	"github.com/rjeczalik/rw"
 )
 
+var verbose string
 var timeout = 5 * time.Second
 
+func init() {
+	for _, arg := range os.Args {
+		if arg == "-test.v" || arg == "-test.v=true" {
+			verbose = "-test.v"
+			break
+		}
+	}
+	if d, err := time.ParseDuration(os.Getenv("FLYING_TIMEOUT")); err == nil {
+		timeout = d
+	}
+}
+
 func helperCmd(cmd ...string) []string {
-	return append([]string{os.Args[0], "-test.run=TestHelperProcess", "--"}, cmd...)
+	return append([]string{os.Args[0], verbose, "-test.run=TestHelperProcess", "--"}, cmd...)
 }
 
 func newcmd(cmd ...string) (*exec.Cmd, Awaiter, *bytes.Buffer) {
@@ -28,14 +41,15 @@ func newcmd(cmd ...string) (*exec.Cmd, Awaiter, *bytes.Buffer) {
 	}
 	switch cmd[0] {
 	case "flying":
-		ww = rw.WaitWriter(buf, []byte(cmd[1]+" ready"))
+		ww = rw.WaitWriter(buf, []byte(cmd[1]+": ready"))
 	default:
 		ww = struct {
 			io.Writer
 			Awaiter
 		}{buf, Done}
 	}
-	c := command(helperCmd(cmd...)...)
+	cmd = helperCmd(cmd...)
+	c := command(cmd[0], cmd[1:]...)
 	w := io.MultiWriter(os.Stdout, ww)
 	c.Stdout, c.Stderr, c.Env = w, w, []string{"TEST_HELPER_PROCESS=1"}
 	return c, ww, buf
@@ -81,39 +95,52 @@ func TestHelperProcess(t *testing.T) {
 	// Each helper command started by a helper flying must print "{{.command}} ready"
 	// to os.Stdout upon successful startup. Otherwise it's going to timeout.
 	case "flying":
-		c := &Client{Log: NopCloser(os.Stdout)}
+		buf := &bytes.Buffer{}
+		ww := rw.WaitWriter(buf, []byte(args[0]+": exited"))
+		c := &Client{Log: NopCloser(io.MultiWriter(ww, os.Stdout))}
 		if err := c.Run(helperCmd(args...)); err != nil {
 			die(err)
 		}
+		if err := ww.Wait(timeout); err != nil {
+			die(err)
+		}
 		return
-	case "TestClientInterrupt":
+	case "client":
+		var sleep time.Duration
+		if len(args) == 1 {
+			if d, err := time.ParseDuration(args[0]); err == nil {
+				sleep = d
+			}
+		}
 		ch, done := make(chan os.Signal, 1), make(chan struct{})
 		signal.Notify(ch, Signals...)
 		go func() {
 			<-ch
 			close(done)
 		}()
-		fmt.Println("TestClientInterrupt ready")
+		fmt.Println("client: ready")
 		select {
 		case <-done:
-			fmt.Println("TestClientInterrupt caught signal")
+			fmt.Println("client: caught signal")
+			time.Sleep(sleep)
+			fmt.Println("client: exited")
 			return
 		case <-time.After(timeout):
-			die("TestClientInterrupt: timeout waiting for signal (cmd=TestClientInterruptChild)")
+			die("client: timeout waiting for signal (cmd=client)")
 		}
 	default:
 		die("Unknown command", cmd)
 	}
 }
 
-func TestClientInterrupt(t *testing.T) {
+func testClient(t *testing.T, cmds ...string) {
 	if os.Getenv("APPVEYOR_BUILD_FOLDER") != "" {
-		t.Skip("TestClientInterrupt TODO(rjeczalik): AppVeyor kills a build on CTRL+BREAK")
+		t.Skip("client TODO(rjeczalik): AppVeyor kills a build on CTRL+BREAK")
 	}
 
 	defer discardsig()() // Because Windows.
 
-	cmd, out := start(t, "flying", "TestClientInterrupt")
+	cmd, out := start(t, cmds...)
 	if err := interrupt(cmd.Process); err != nil {
 		t.Fatalf("want interrupt(...)=nil; got %v", err)
 	}
@@ -122,9 +149,18 @@ func TestClientInterrupt(t *testing.T) {
 	}
 	// Check whether events happened in proper order.
 	s := out.String()
-	i := strings.Index(s, "TestClientInterrupt ready")
-	j := strings.Index(s, "TestClientInterrupt caught signal")
-	if i >= j || i == -1 {
-		t.Errorf("want i=%d < j=%d and i != -1", i, j)
+	i := strings.Index(s, "client: ready")
+	j := strings.Index(s, "client: caught signal")
+	k := strings.Index(s, "client: exited")
+	if i >= j || j >= k || i == -1 {
+		t.Errorf("want -1 < i=%d < j=%d < k=%d", i, j, k)
 	}
+}
+
+func TestClientInterrupt(t *testing.T) {
+	testClient(t, "flying", "client")
+}
+
+func TestClientInterruptWait3s(t *testing.T) {
+	testClient(t, "flying", "client", "3s")
 }

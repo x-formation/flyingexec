@@ -7,13 +7,17 @@ import (
 	"io/ioutil"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
 	"bitbucket.org/kardianos/osext"
 	"github.com/rjeczalik/rw"
 )
+
+var nl = "\n"
 
 var errAlreadyStarted = errors.New("flying: command already started")
 var errEmptyCommnd = errors.New("flying: empty command")
@@ -25,6 +29,9 @@ var SourceDir string
 func init() {
 	if dir, err := osext.ExecutableFolder(); err == nil {
 		SourceDir = dir
+	}
+	if runtime.GOOS == "windows" {
+		nl = "\r\n"
 	}
 }
 
@@ -60,14 +67,14 @@ func (c *Client) Start(cmd []string) error {
 	if wd, err := os.Getwd(); err == nil {
 		cwd = wd
 	}
-	c.logf("flying: started with command=%s, args=[%v], CWD=%s\n", cmdname,
+	c.printf("flying: started with command=%s, args=[%v], CWD=%s", cmdname,
 		strings.Join(cmd[1:], ", "), cwd)
 	path, err := exec.LookPath(cmd[0])
 	if err != nil {
 		return c.exit(err)
 	}
-	c.logf("flying: %s is %s\n", cmdname, path)
-	c.cmd = exec.Command(path, cmd[1:]...)
+	c.printf("flying: %s is %s", cmdname, path)
+	c.cmd = command(path, cmd[1:]...)
 	c.cmd.Stdout = rw.PrefixWriter(c.log(), prefix(cmdname))
 	c.cmd.Stderr = rw.PrefixWriter(c.log(), prefix(cmdname+"] [error"))
 	if err = c.cmd.Start(); err != nil {
@@ -118,16 +125,30 @@ func (c *Client) log() io.WriteCloser {
 
 func (c *Client) exit(err error) error {
 	if err != nil {
-		c.logf("flying: failed with: %v\n", err)
+		c.printf("flying: failed with: %v", err)
 	} else {
-		c.logf("flying: exited successfully\n")
+		c.printf("flying: exited successfully")
 	}
 	c.log().Close()
 	return err
 }
 
-func (c *Client) logf(format string, v ...interface{}) {
-	c.log().Write([]byte("[" + now() + "] " + fmt.Sprintf(format, v...)))
+func (c *Client) printf(format string, v ...interface{}) {
+	c.log().Write([]byte("[" + now() + "] " + fmt.Sprintf(format, v...) + nl))
+}
+
+func runconsole(c *Client, cmd []string) error {
+	ch, err := make(chan os.Signal, 1), make(chan error, 1)
+	signal.Notify(ch, Signals...)
+	if err := c.Start(cmd); err != nil {
+		return err
+	}
+	go func() {
+		for _ = range ch {
+			err <- c.Interrupt()
+		}
+	}()
+	return nonil(c.Wait(), <-err)
 }
 
 var defaultClient Client

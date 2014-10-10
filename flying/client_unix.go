@@ -4,7 +4,7 @@ package flying
 
 import (
 	"os"
-	"os/signal"
+	"os/exec"
 	"syscall"
 )
 
@@ -23,15 +23,9 @@ func interrupt(p *os.Process) error {
 }
 
 func run(c *Client, cmd []string) error {
-	ch, err := make(chan os.Signal, 1), make(chan error, 1)
-	signal.Notify(ch, Signals...)
-	if err := c.Start(cmd); err != nil {
-		return err
-	}
-	go func() {
-		for _ = range ch {
-			err <- c.Interrupt()
-		}
-	}()
-	return nonil(c.Wait(), <-err)
+	return runconsole(c, cmd)
+}
+
+func command(cmd string, args ...string) *exec.Cmd {
+	return exec.Command(cmd, args...)
 }
