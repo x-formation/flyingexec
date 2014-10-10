@@ -7,8 +7,8 @@ import (
 	"syscall"
 )
 
-func testcmd(cmd string, args ...string) *exec.Cmd {
-	c := exec.Command(cmd, args...)
+func command(cmd ...string) *exec.Cmd {
+	c := exec.Command(cmd[0], cmd[1:]...)
 	c.SysProcAttr = &syscall.SysProcAttr{
 		CreationFlags: syscall.CREATE_NEW_PROCESS_GROUP,
 	}

@@ -4,6 +4,6 @@ package flying
 
 import "os/exec"
 
-func testcmd(cmd string, args ...string) *exec.Cmd {
-	return exec.Command(cmd, args...)
+func command(cmd ...string) *exec.Cmd {
+	return exec.Command(cmd[0], cmd[1:]...)
 }

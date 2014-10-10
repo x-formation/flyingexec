@@ -19,6 +19,25 @@ var errAlreadyStarted = errors.New("flying: command already started")
 var errEmptyCommnd = errors.New("flying: empty command")
 var errNotRunning = errors.New("flying: command is not running")
 
+// SourceDir TODO
+var SourceDir string
+
+func init() {
+	if dir, err := osext.ExecutableFolder(); err == nil {
+		SourceDir = dir
+	}
+}
+
+func now() string {
+	return time.Now().Format("2006-01-02 15:04:05")
+}
+
+func prefix(app string) func() string {
+	return func() string {
+		return fmt.Sprintf("[%s] [%s] ", now(), app)
+	}
+}
+
 // Client TODO
 type Client struct {
 	// Log TODO
@@ -76,12 +95,8 @@ func (c *Client) Wait() error {
 }
 
 // Run TODO
-func Run(cmd []string) error {
-	var c Client
-	if err := c.Start(cmd); err != nil {
-		return err
-	}
-	return c.Wait()
+func (c *Client) Run(cmd []string) error {
+	return run(c, cmd)
 }
 
 func (c *Client) log() io.WriteCloser {
@@ -91,10 +106,7 @@ func (c *Client) log() io.WriteCloser {
 	if c.wc != nil {
 		return c.wc
 	}
-	name := "flying.log"
-	if dir, err := osext.ExecutableFolder(); err == nil {
-		name = filepath.Join(dir, name)
-	}
+	name := filepath.Join(SourceDir, "flying.log")
 	// TODO(rjeczalik): Rotate log each x MiB?
 	wc, err := os.OpenFile(name, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0664)
 	if err != nil {
@@ -118,12 +130,9 @@ func (c *Client) logf(format string, v ...interface{}) {
 	c.log().Write([]byte("[" + now() + "] " + fmt.Sprintf(format, v...)))
 }
 
-func now() string {
-	return time.Now().Format("2006-01-02 15:04:05")
-}
+var defaultClient Client
 
-func prefix(app string) func() string {
-	return func() string {
-		return fmt.Sprintf("[%s] [%s] ", now(), app)
-	}
+// Run TODO
+func Run(cmd []string) error {
+	return defaultClient.Run(cmd)
 }

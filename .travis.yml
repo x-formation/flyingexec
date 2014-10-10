@@ -6,7 +6,7 @@ matrix:
   fast_finish: true
 env:
   global:
-    secure: gY8t1sghc58bBiPhjFUm+qXMqiAGUXz4Lq7feqaMpATNFEe0+OQ77UV/PTuq86O9gmxm9/n4UtxO6NHBEHzpeO1Uh+nLPDrXUx7c6agVW10j13w0sdinpIgTa6VLUM597YLeSU9BovVUzQdX+VHWkpzHb1K8c55CNsF1vZsXoJk=
+    secure: "pcoBr8dGAqrfeNhWHH/u0ZtiT5GJnQi0ggHmXUxDdjhe9QCZ9Pjeg+0gSspWg7DyCeWjtsSloQ0scSb7xWxtLCOes6rJ2hjZ0W8S5X1oc8Bs2BOebh4ECFIpJOt+uoslxfLMz+tUlDGjmaRj77h1b+7kS7Rdjo+scFWZ0WQ+B1M="
 install:
 - export GOBIN=$HOME/bin
 - export PATH=$GOBIN:$PATH

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -17,27 +16,42 @@ import (
 
 var timeout = 5 * time.Second
 
-func command(cmd ...string) (msg string, realcmd []string) {
-	msg = cmd[0] + " ready"
-	realcmd = append([]string{os.Args[0], "-test.run=TestHelperProcess", "--"}, cmd...)
-	return
+func helperCmd(cmd ...string) []string {
+	return append([]string{os.Args[0], "-test.run=TestHelperProcess", "--"}, cmd...)
+}
+
+func newcmd(cmd ...string) (*exec.Cmd, Awaiter, *bytes.Buffer) {
+	buf := &bytes.Buffer{}
+	var ww interface {
+		io.Writer
+		Awaiter
+	}
+	switch cmd[0] {
+	case "flying":
+		ww = rw.WaitWriter(buf, []byte(cmd[1]+" ready"))
+	default:
+		ww = struct {
+			io.Writer
+			Awaiter
+		}{buf, Done}
+	}
+	c := command(helperCmd(cmd...)...)
+	w := io.MultiWriter(os.Stdout, ww)
+	c.Stdout, c.Stderr, c.Env = w, w, []string{"TEST_HELPER_PROCESS=1"}
+	return c, ww, buf
 }
 
 // Start expectes the started process to print "{{.command}} ready"
 // upon successful startup.
-func start(t *testing.T, cmd ...string) (c *exec.Cmd, buf *bytes.Buffer) {
-	msg, cmd := command(cmd...)
-	c, buf = testcmd(cmd[0], cmd[1:]...), &bytes.Buffer{}
-	w := rw.WaitWriter(buf, []byte(msg))
-	mw := io.MultiWriter(os.Stdout, w)
-	c.Stdout, c.Stderr, c.Env = mw, mw, []string{"TEST_HELPER_PROCESS=1"}
+func start(t *testing.T, cmd ...string) (*exec.Cmd, *bytes.Buffer) {
+	c, w, buf := newcmd(cmd...)
 	if err := c.Start(); err != nil {
 		t.Fatalf("want c.Start()=nil, got %v (cmd=%v)", err, cmd)
 	}
 	if err := w.Wait(timeout); err != nil {
 		t.Fatalf("want w.Wait(...)=nil; got %v (cmd=%v)", err, cmd)
 	}
-	return
+	return c, buf
 }
 
 func die(v ...interface{}) {
@@ -67,26 +81,8 @@ func TestHelperProcess(t *testing.T) {
 	// Each helper command started by a helper flying must print "{{.command}} ready"
 	// to os.Stdout upon successful startup. Otherwise it's going to timeout.
 	case "flying":
-		msg, cmd := command(args...)
-		w := rw.WaitWriter(ioutil.Discard, []byte(msg))
-		ch, err := make(chan os.Signal, 1), make(chan error)
-		c := &Client{Log: NopCloser(io.MultiWriter(os.Stdout, w))}
-		signal.Notify(ch, Signals...)
-		if err := c.Start(cmd); err != nil {
-			die(err)
-		}
-		if err := w.Wait(timeout); err != nil {
-			die(err)
-		}
-		go func() {
-			<-ch
-			err <- nonil(c.Interrupt(), c.Interrupt())
-		}()
-		fmt.Println("flying ready")
-		if err := c.Wait(); err != nil {
-			die(err)
-		}
-		if err := <-err; err != nil {
+		c := &Client{Log: NopCloser(os.Stdout)}
+		if err := c.Run(helperCmd(args...)); err != nil {
 			die(err)
 		}
 		return
@@ -100,10 +96,10 @@ func TestHelperProcess(t *testing.T) {
 		fmt.Println("TestClientInterrupt ready")
 		select {
 		case <-done:
-			fmt.Println("child interrupted")
+			fmt.Println("TestClientInterrupt caught signal")
 			return
 		case <-time.After(timeout):
-			die("TestHelperProcess: timeout waiting for signal (cmd=TestClientInterruptChild)")
+			die("TestClientInterrupt: timeout waiting for signal (cmd=TestClientInterruptChild)")
 		}
 	default:
 		die("Unknown command", cmd)
@@ -115,6 +111,8 @@ func TestClientInterrupt(t *testing.T) {
 		t.Skip("TestClientInterrupt TODO(rjeczalik): AppVeyor kills a build on CTRL+BREAK")
 	}
 
+	defer discardsig()() // Because Windows.
+
 	cmd, out := start(t, "flying", "TestClientInterrupt")
 	if err := interrupt(cmd.Process); err != nil {
 		t.Fatalf("want interrupt(...)=nil; got %v", err)
@@ -125,9 +123,8 @@ func TestClientInterrupt(t *testing.T) {
 	// Check whether events happened in proper order.
 	s := out.String()
 	i := strings.Index(s, "TestClientInterrupt ready")
-	j := strings.Index(s, "flying ready")
-	k := strings.Index(s, "child interrupted")
-	if i >= j || j >= k || i == -1 {
-		t.Errorf("want i=%d < j=%d < k=%d and i != -1", i, j, k)
+	j := strings.Index(s, "TestClientInterrupt caught signal")
+	if i >= j || i == -1 {
+		t.Errorf("want i=%d < j=%d and i != -1", i, j)
 	}
 }
