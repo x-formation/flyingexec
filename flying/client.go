@@ -145,17 +145,23 @@ func (c *Client) printf(format string, v ...interface{}) {
 }
 
 func runconsole(c *Client, cmd []string) error {
-	ch, err := make(chan os.Signal, 1), make(chan error, 1)
+	ch, errch := make(chan os.Signal, 1), make(chan error, 1)
 	signal.Notify(ch, Signals...)
 	if err := c.Start(cmd); err != nil {
 		return err
 	}
 	go func() {
 		for _ = range ch {
-			err <- c.Interrupt()
+			errch <- c.Interrupt()
 		}
 	}()
-	return nonil(c.Wait(), <-err)
+	err := c.Wait()
+	select {
+	case e := <-errch:
+		err = nonil(err, e)
+	default:
+	}
+	return err
 }
 
 var defaultClient Client
