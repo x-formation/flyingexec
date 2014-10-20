@@ -97,7 +97,7 @@ func TestHelperProcess(t *testing.T) {
 	case "flying":
 		buf := &bytes.Buffer{}
 		ww := rw.WaitWriter(buf, []byte(args[0]+": exited"))
-		c := &Client{Log: NopCloser(io.MultiWriter(ww, os.Stdout))}
+		c := &Client{Log: nopCloser(io.MultiWriter(ww, os.Stdout))}
 		if err := c.Run(helperCmd(args...)); err != nil {
 			die(err)
 		}
@@ -128,6 +128,9 @@ func TestHelperProcess(t *testing.T) {
 		case <-time.After(timeout):
 			die("client: timeout waiting for signal (cmd=client)")
 		}
+	case "exit":
+		fmt.Println("exit: ready")
+		os.Exit(1)
 	default:
 		die("Unknown command", cmd)
 	}
@@ -163,4 +166,26 @@ func TestClientInterrupt(t *testing.T) {
 
 func TestClientInterruptWait3s(t *testing.T) {
 	testClient(t, "flying", "client", "3s")
+}
+
+func TestClientError(t *testing.T) {
+	if os.Getenv("APPVEYOR_BUILD_FOLDER") != "" {
+		t.Skip("client TODO(rjeczalik): AppVeyor kills a build on CTRL+BREAK")
+	}
+
+	defer discardsig()() // Because Windows.
+
+	errch := make(chan error, 1)
+	cmd, _ := start(t, "flying", "exit")
+	go func() {
+		errch <- cmd.Wait()
+	}()
+	select {
+	case err := <-errch:
+		if err == nil {
+			t.Fatal("want cmd.Wait()!=nil")
+		}
+	case <-time.After(timeout):
+		t.Fatalf("cmd.Wait() has timed out after %v", timeout)
+	}
 }

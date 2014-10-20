@@ -50,6 +50,9 @@ type Client struct {
 	// Log TODO
 	Log io.WriteCloser
 
+	// Env TODO
+	Env []string
+
 	cmd *exec.Cmd
 	wc  io.WriteCloser
 }
@@ -73,8 +76,12 @@ func (c *Client) Start(cmd []string) error {
 	if err != nil {
 		return c.exit(err)
 	}
+	if abspath, err := filepath.Abs(path); err == nil {
+		path = abspath
+	}
 	c.printf("flying: %s is %s", cmdname, path)
 	c.cmd = command(path, cmd[1:]...)
+	c.cmd.Env = mergenv(os.Environ(), c.Env...)
 	c.cmd.Stdout = rw.PrefixWriter(c.log(), prefix(cmdname))
 	c.cmd.Stderr = rw.PrefixWriter(c.log(), prefix(cmdname+"] [error"))
 	if err = c.cmd.Start(); err != nil {
@@ -117,7 +124,7 @@ func (c *Client) log() io.WriteCloser {
 	// TODO(rjeczalik): Rotate log each x MiB?
 	wc, err := os.OpenFile(name, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0664)
 	if err != nil {
-		return NopCloser(ioutil.Discard)
+		return nopCloser(ioutil.Discard)
 	}
 	c.wc = wc
 	return c.wc
@@ -138,17 +145,23 @@ func (c *Client) printf(format string, v ...interface{}) {
 }
 
 func runconsole(c *Client, cmd []string) error {
-	ch, err := make(chan os.Signal, 1), make(chan error, 1)
+	ch, errch := make(chan os.Signal, 1), make(chan error, 1)
 	signal.Notify(ch, Signals...)
 	if err := c.Start(cmd); err != nil {
 		return err
 	}
 	go func() {
 		for _ = range ch {
-			err <- c.Interrupt()
+			errch <- c.Interrupt()
 		}
 	}()
-	return nonil(c.Wait(), <-err)
+	err := c.Wait()
+	select {
+	case e := <-errch:
+		err = nonil(err, e)
+	default:
+	}
+	return err
 }
 
 var defaultClient Client

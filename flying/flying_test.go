@@ -3,6 +3,8 @@ package flying
 import (
 	"os"
 	"os/signal"
+	"reflect"
+	"testing"
 	"time"
 )
 
@@ -26,3 +28,40 @@ func (nopAwaiter) Wait(time.Duration) error {
 
 // Done TODO
 var Done Awaiter = nopAwaiter{}
+
+func TestMergenv(t *testing.T) {
+	cases := [...]struct {
+		base []string
+		envs []string
+		merg []string
+	}{{
+		[]string{"ABC=abc", "DEF=def"},
+		[]string{"GHI=ghi"},
+		[]string{"ABC=abc", "DEF=def", "GHI=ghi"},
+	}, {
+		[]string{"ABC=abc", "DEF=def", "ABC=cba"},
+		[]string{"GHI=ghi"},
+		[]string{"ABC=cba", "DEF=def", "GHI=ghi"},
+	}, {
+		[]string{"ABC=abc", "DEF=def", "GHI=old", "ABC=cba"},
+		[]string{"GHI=ghi"},
+		[]string{"ABC=cba", "DEF=def", "GHI=ghi"},
+	}, {
+		[]string{"ABC=abc", "DEF=def", "GHI=old", "ABC=cba"},
+		[]string{"GHI=ghi", "DEF=fed"},
+		[]string{"ABC=cba", "DEF=fed", "GHI=ghi"},
+	}, {
+		[]string{"ABC=abc", "DEF=def", "GHI=old", "ABC=cba", "XXX"},
+		[]string{"GHI=ghi", "DEF=fed", "XYZ"},
+		[]string{"ABC=cba", "DEF=fed", "GHI=ghi"},
+	}, {
+		os.Environ(),
+		[]string{},
+		os.Environ(),
+	}}
+	for i, cas := range cases {
+		if merg := mergenv(cas.base, cas.envs...); !reflect.DeepEqual(merg, cas.merg) {
+			t.Errorf("want merg=%v; got %v (i=%d)", cas.merg, merg, i)
+		}
+	}
+}
