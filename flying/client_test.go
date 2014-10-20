@@ -97,7 +97,7 @@ func TestHelperProcess(t *testing.T) {
 	case "flying":
 		buf := &bytes.Buffer{}
 		ww := rw.WaitWriter(buf, []byte(args[0]+": exited"))
-		c := &Client{Log: NopCloser(io.MultiWriter(ww, os.Stdout))}
+		c := &Client{Log: nopCloser(io.MultiWriter(ww, os.Stdout))}
 		if err := c.Run(helperCmd(args...)); err != nil {
 			die(err)
 		}

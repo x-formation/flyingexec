@@ -50,6 +50,9 @@ type Client struct {
 	// Log TODO
 	Log io.WriteCloser
 
+	// Env TODO
+	Env []string
+
 	cmd *exec.Cmd
 	wc  io.WriteCloser
 }
@@ -75,6 +78,7 @@ func (c *Client) Start(cmd []string) error {
 	}
 	c.printf("flying: %s is %s", cmdname, path)
 	c.cmd = command(path, cmd[1:]...)
+	c.cmd.Env = mergenv(os.Environ(), c.Env...)
 	c.cmd.Stdout = rw.PrefixWriter(c.log(), prefix(cmdname))
 	c.cmd.Stderr = rw.PrefixWriter(c.log(), prefix(cmdname+"] [error"))
 	if err = c.cmd.Start(); err != nil {
@@ -117,7 +121,7 @@ func (c *Client) log() io.WriteCloser {
 	// TODO(rjeczalik): Rotate log each x MiB?
 	wc, err := os.OpenFile(name, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0664)
 	if err != nil {
-		return NopCloser(ioutil.Discard)
+		return nopCloser(ioutil.Discard)
 	}
 	c.wc = wc
 	return c.wc
