@@ -76,6 +76,9 @@ func (c *Client) Start(cmd []string) error {
 	if err != nil {
 		return c.exit(err)
 	}
+	if abspath, err := filepath.Abs(path); err == nil {
+		path = abspath
+	}
 	c.printf("flying: %s is %s", cmdname, path)
 	c.cmd = command(path, cmd[1:]...)
 	c.cmd.Env = mergenv(os.Environ(), c.Env...)
