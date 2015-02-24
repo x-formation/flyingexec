@@ -31,12 +31,13 @@ func uniquekv(kv *[]string) func(string) {
 	unique := make(map[string]int)
 	return func(s string) {
 		// http://blogs.msdn.com/b/oldnewthing/archive/2010/05/06/10008132.aspx
-		i := strings.Index(s, "=")
-		if i == 0 {
+		switch i := strings.Index(s, "="); i {
+		case 0:
 			*kv = append(*kv, s)
 			return
-		}
-		if i != -1 {
+		case -1:
+			return
+		default:
 			if n, ok := unique[s[:i]]; ok {
 				(*kv)[n] = s
 			} else {
