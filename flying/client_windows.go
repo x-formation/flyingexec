@@ -10,7 +10,7 @@ import (
 	"strings"
 	"syscall"
 
-	"bitbucket.org/kardianos/service"
+	"github.com/kardianos/service"
 )
 
 // Signals TODO
@@ -103,28 +103,47 @@ func startsig(c *Client, cmd []string, errch chan<- error, ch chan os.Signal, sv
 	return nil
 }
 
+func newservice(c *Client, cmd []string) *srvc {
+	return &srvc{
+		ch:    make(chan os.Signal, 1),
+		errch: make(chan error, 1),
+		cmd:   cmd,
+		c:     c,
+	}
+}
+
+type srvc struct {
+	ch    chan os.Signal
+	errch chan error
+	cmd   []string
+	c     *Client
+}
+
+func (s *srvc) Start(srvc service.Service) error {
+	if err := console(); err != nil {
+		return err
+	}
+	return startsig(s.c, s.cmd, s.errch, s.ch, srvc)
+}
+
+func (s *srvc) Stop(_ service.Service) error {
+	s.ch <- os.Interrupt
+	return <-s.errch
+}
+
 func runservice(c *Client, name string, cmd []string) error {
-	srvc, err := service.NewService(name, "", "")
+	srvc, err := service.New(newservice(c, cmd), &service.Config{
+		Name: name,
+	})
 	if err != nil {
 		return err
 	}
-	errch, ch := make(chan error, 1), make(chan os.Signal, 1)
-	err = srvc.Run(
-		func() error {
-			if err := console(); err != nil {
-				return err
-			}
-			return startsig(c, cmd, errch, ch, srvc)
-		},
-		func() error {
-			ch <- os.Interrupt
-			if u := <-errch; u != nil {
-				srvc.Error(err.Error())
-			}
-			return nil
-		})
+	log, err := srvc.Logger(nil)
 	if err != nil {
-		srvc.Error(err.Error())
+		return err
+	}
+	if err = srvc.Run(); err != nil {
+		log.Error(err.Error())
 	}
 	return nil
 }
