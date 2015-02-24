@@ -8,7 +8,8 @@ environment:
  GOPATH: c:\projects
 
 install:
- - set PATH=%GOPATH%\bin;%PATH%
+ - set PATH=C:\go-x64\bin;%GOPATH%\bin;%PATH%
+ - set GOROOT=c:\go-x64
  - cd %APPVEYOR_BUILD_FOLDER%
  - go version
  - go get golang.org/x/tools/cmd/vet
