@@ -55,13 +55,21 @@ func TestMergenv(t *testing.T) {
 		[]string{"GHI=ghi", "DEF=fed", "XYZ"},
 		[]string{"ABC=cba", "DEF=fed", "GHI=ghi"},
 	}, {
+		[]string{"AB C=ABC D"},
+		[]string{},
+		[]string{"AB C=ABC D"},
+	}, {
+		[]string{"=:C=s"},
+		[]string{},
+		[]string{"=:C=s"},
+	}, {
 		os.Environ(),
 		[]string{},
 		os.Environ(),
 	}}
 	for i, cas := range cases {
 		if merg := mergenv(cas.base, cas.envs...); !reflect.DeepEqual(merg, cas.merg) {
-			t.Errorf("want merg=%v; got %v (i=%d)", cas.merg, merg, i)
+			t.Errorf("want merg=%v;\ngot %v (i=%d)", cas.merg, merg, i)
 		}
 	}
 }

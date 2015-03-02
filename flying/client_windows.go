@@ -8,10 +8,9 @@ import (
 	"os/exec"
 	"os/signal"
 	"strings"
-	"sync"
 	"syscall"
 
-	"bitbucket.org/kardianos/service"
+	"github.com/kardianos/service"
 )
 
 // Signals TODO
@@ -82,44 +81,69 @@ func isservice(cmd []string) (string, []string, bool) {
 	return name, cmd, is
 }
 
-func startsig(c *Client, cmd []string, ch chan os.Signal, errch chan<- error) error {
+func startsig(c *Client, cmd []string, errch chan<- error, ch chan os.Signal, svc service.Service) error {
 	signal.Notify(ch, Signals...)
+	interrch := make(chan error, 1)
 	if err := c.Start(cmd); err != nil {
 		return err
 	}
-	var once sync.Once
 	go func() {
-		for _ = range ch {
-			once.Do(func() {
-				go func() {
-					errch <- nonil(c.Interrupt(), c.Wait())
-				}()
-			})
+		go func() {
+			<-ch
+			interrch <- c.Interrupt()
+		}()
+		err := c.Wait()
+		select {
+		case e := <-interrch:
+			errch <- nonil(err, e)
+		default:
+			errch <- nonil(err, svc.Stop())
 		}
 	}()
 	return nil
 }
 
+func newservice(c *Client, cmd []string) *srvc {
+	return &srvc{
+		ch:    make(chan os.Signal, 1),
+		errch: make(chan error, 1),
+		cmd:   cmd,
+		c:     c,
+	}
+}
+
+type srvc struct {
+	ch    chan os.Signal
+	errch chan error
+	cmd   []string
+	c     *Client
+}
+
+func (s *srvc) Start(srvc service.Service) error {
+	if err := console(); err != nil {
+		return err
+	}
+	return startsig(s.c, s.cmd, s.errch, s.ch, srvc)
+}
+
+func (s *srvc) Stop(_ service.Service) error {
+	s.ch <- os.Interrupt
+	return <-s.errch
+}
+
 func runservice(c *Client, name string, cmd []string) error {
-	srvc, err := service.NewService(name, "", "")
+	srvc, err := service.New(newservice(c, cmd), &service.Config{
+		Name: name,
+	})
 	if err != nil {
 		return err
 	}
-	ch := make(chan os.Signal, 1)
-	errch := make(chan error, 1)
-	err = srvc.Run(
-		func() error {
-			if err := console(); err != nil {
-				return err
-			}
-			return startsig(c, cmd, ch, errch)
-		},
-		func() error {
-			ch <- os.Interrupt
-			return <-errch
-		})
+	log, err := srvc.Logger(nil)
 	if err != nil {
-		srvc.Error(err.Error())
+		return err
+	}
+	if err = srvc.Run(); err != nil {
+		log.Error(err.Error())
 	}
 	return nil
 }

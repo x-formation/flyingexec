@@ -30,7 +30,14 @@ func nopCloser(writer io.Writer) io.WriteCloser {
 func uniquekv(kv *[]string) func(string) {
 	unique := make(map[string]int)
 	return func(s string) {
-		if i := strings.Index(s, "="); i != -1 {
+		// http://blogs.msdn.com/b/oldnewthing/archive/2010/05/06/10008132.aspx
+		switch i := strings.Index(s, "="); i {
+		case 0:
+			*kv = append(*kv, s)
+			return
+		case -1:
+			return
+		default:
 			if n, ok := unique[s[:i]]; ok {
 				(*kv)[n] = s
 			} else {
